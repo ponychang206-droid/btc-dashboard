@@ -63,7 +63,7 @@ if df_mvrv is not None and not df_mvrv.empty:
 
     # S2: MVRV
     current_mvrv = float(df_mvrv.iloc[0].get('value', 1.36))
-    s2_score = max(0.0, min(20.0, (2.0 - current_mvrv) / (2.0 - 1.0) * 20))
+    s2_score = max(0.0, min(20.0, (2.2 - current_mvrv) / (2.2 - 1.4) * 20))
 
     # S3: NUPL 
     current_nupl = float(df_nupl.iloc[0].get('value', 0.118)) if df_nupl is not None else 0.118
