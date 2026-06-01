@@ -108,7 +108,7 @@ with col_left:
 
 with col_right:
     st.subheader("📋 當前指標分解讀數")
-    st.info(f"S1 · SOPR 結構分: {s1_score:.1f} / 20")
+    st.info(f"S1 · 獲利/停損: {s1_score:.1f} / 20")
     st.info(f"S2 · MVRV 偏差分: {s2_score:.1f} / 20")
     st.info(f"S3 · NUPL 未實現損失分: {s3_score:.1f} / 20")
     st.info(f"S4 · NRPL 實現資金分: {s4_score:.1f} / 20")
