@@ -82,7 +82,7 @@ else:
 total_score = s1_score + s2_score + s3_score + s4_score + s5_score
 
 # ==========================================
-# 4. 前端佈局與彩虹指針儀表
+# 4. 前端佈局與彩虹指針儀表 (高相容更新版)
 # ==========================================
 col_left, col_right = st.columns([1.2, 1])
 
@@ -94,8 +94,7 @@ with col_left:
         value = total_score,
         domain = {'x': [0, 1], 'y': [0, 1]},
         gauge = {
-            'axis': {'range': [0, 100], 'tickwidth': 1},
-            'bar': {'color': "white", 'width': 3},
+            'axis': {'range': [0, 100]},
             'steps': [
                 {'range': [0, 20], 'color': '#2b2b2b'},     # 觀望區
                 {'range': [20, 50], 'color': '#1f4e5b'},    # 輕倉分批
