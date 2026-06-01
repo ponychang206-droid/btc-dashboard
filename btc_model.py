@@ -108,10 +108,10 @@ with col_left:
 
 with col_right:
     st.subheader("📋 當前指標分解讀數")
-    st.info(f"S1 · 獲利/停損: {s1_score:.1f} / 20")
-    st.info(f"S2 · MVRV 偏差分: {s2_score:.1f} / 20")
-    st.info(f"S3 · NUPL 未實現損失分: {s3_score:.1f} / 20")
-    st.info(f"S4 · NRPL 實現資金分: {s4_score:.1f} / 20")
+    st.info(f"S1 · 獲利還是停損指標: {s1_score:.1f} / 20")
+    st.info(f"S2 · 全網買貴/買便宜檢測器: {s2_score:.1f} / 20")
+    st.info(f"S3 · 集體帳面虧損度: {s3_score:.1f} / 20")
+    st.info(f"S4 · 割肉變現總金額: {s4_score:.1f} / 20")
     st.info(f"S5 · 恐懼貪婪情緒分: {s5_score:.1f} / 20")
     
     st.success(f"**🔥 綜合大盤得分: {total_score:.1f} 分**")
