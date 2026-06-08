@@ -175,4 +175,382 @@ if ticker_data is not None:
     if not df_weekly.empty and len(df_weekly) >= 200:
         ma200_w_current = float(df_weekly.iloc[-1]['200WMA'])
         dist_200w = (btc_price - ma200_w_current) / ma200_w_current
-        s8 = max(0.0, min(20.0, ((0.05 - dist_20
+        s8 = max(0.0, min(20.0, ((0.05 - dist_200w) / 0.10) * 20.0))
+    else:
+        ma200_w_current = btc_price * 0.7
+        s8 = 10.0
+        
+    # s9: 四年減半週期時空定位
+    last_halving = datetime(2024, 4, 20)
+    days_since_halving = (datetime.now() - last_halving).days
+    cycle_progress = (days_since_halving % 1460) / 1460 
+    if 500 <= days_since_halving % 1460 <= 800:
+        s9 = max(0.0, min(5.0, (1.0 - cycle_progress) * 10.0))
+    else:
+        s9 = max(5.0, min(10.0, cycle_progress * 10.0))
+
+    total_score = s1 + s2 + s3 + s4 + s5 + s6 + s7 + s8 + s9
+
+# ==========================================
+# 3. 側邊欄切換路由
+# ==========================================
+with st.sidebar:
+    st.markdown("### 🔮 戰情室切換")
+    page = st.radio(
+        "請選擇檢視視角：",
+        ["直男量化經理人版", "文元專屬：能不能買包包版"],
+        index=0
+    )
+    st.markdown("---")
+    st.markdown("### 📊 MSTR 官方資產負債表")
+    st.info(f"🪙 持倉總量: {MSTR_BTC_HOLDINGS:,} BTC")
+    st.info(f"📜 流通股數: {MSTR_SHARES_OUTSTANDING:,} 股")
+    st.info(f"📉 平均成本: ${MSTR_AVG_COST:,} USD")
+    st.markdown("---")
+
+# ==========================================
+# 4. 分頁 A：直男量化經理人版
+# ==========================================
+if page == "直男量化經理人版":
+    st.markdown("""
+        <style>
+        html, body, [data-testid="stAppViewContainer"] {
+            background-color: #0b0e11 !important;
+            color: #eaecef !important;
+            font-family: 'SF Pro Display', -apple-system, 'Segoe UI', Roboto, sans-serif;
+        }
+        [data-testid="stHeader"] { background: rgba(0,0,0,0); }
+        footer {visibility: hidden;}
+        
+        .metric-card {
+            background: linear-gradient(135deg, #181a20 0%, #1e222b 100%);
+            border: 1px solid #2b3139;
+            border-radius: 12px;
+            padding: 16px 20px;
+            margin-bottom: 12px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            transition: transform 0.2s, border-color 0.2s;
+        }
+        .metric-card:hover {
+            transform: translateY(-2px);
+            border-color: #f3ba2f;
+        }
+        .metric-title {
+            font-size: 14px;
+            color: #848e9c;
+            font-weight: 500;
+            margin-bottom: 6px;
+            display: flex;
+            justify-content: space-between;
+        }
+        .metric-value { font-size: 16px; font-weight: 600; color: #eaecef; }
+        
+        .badge {
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: bold;
+        }
+        .badge-gray { background-color: #2b3139; color: #98a6b7; }
+        .badge-yellow { background-color: rgba(243, 186, 47, 0.15); color: #f3ba2f; }
+        .badge-green { background-color: rgba(14, 203, 129, 0.15); color: #0ecb81; }
+        .badge-red { background-color: rgba(246, 70, 93, 0.15); color: #f6465d; }
+        
+        .score-display {
+            font-size: 48px;
+            font-weight: 800;
+            color: #f3ba2f;
+            text-shadow: 0 0 20px rgba(243, 186, 47, 0.3);
+            font-family: 'Courier New', monospace;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+
+    st.markdown(f"""
+        <div style="display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 1px solid #2b3139; margin-bottom: 25px;">
+            <div style="font-size: 24px; font-weight: 700; color: #eaecef; display: flex; align-items: center; gap: 10px;">
+                <span style="color: #f3ba2f;">🔮</span> BTC 9 因子抄底監控看板 (2026精密股數修正版)
+            </div>
+            <div style="font-size: 12px; color: #848e9c; text-align: right;">
+                系統狀態：<span style="color: #0ecb81; font-weight: bold;">● SDK 即時串流中</span><br>
+                更新時間：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+            </div>
+        </div>
+    """, unsafe_allow_html=True)
+
+    col_left, col_right = st.columns([1.1, 1])
+
+    with col_left:
+        delta_color = "#0ecb81" if "-" not in price_delta_str else "#f6465d"
+        st.markdown(f"""
+            <div style="background: #181a20; padding: 20px; border-radius: 12px; border: 1px solid #2b3139; margin-bottom: 20px;">
+                <div style="font-size: 13px; color: #848e9c; font-weight: 500; text-transform: uppercase; letter-spacing: 1px;">Yahoo Finance 跨市場即時報價 (BTC/USD)</div>
+                <div style="display: flex; align-items: baseline; gap: 15px; margin-top: 5px;">
+                    <span style="font-size: 42px; font-weight: 800; color: #eaecef; font-family: monospace;">${btc_price:,.2f}</span>
+                    <span style="font-size: 18px; font-weight: 600; color: {delta_color};">{price_delta_str}</span>
+                </div>
+            </div>
+        """, unsafe_allow_html=True)
+        
+        fig_gauge = go.Figure(go.Indicator(
+            mode = "gauge+number", value = total_score, domain = {'x': [0, 1], 'y': [0, 1]},
+            gauge = {
+                'axis': {'range': [0, 100], 'tickwidth': 1, 'tickcolor': "#848e9c", 'tickfont': {'size': 12}},
+                'bar': {'color': "#ffffff", 'thickness': 0.25},
+                'bgcolor': "rgba(0,0,0,0)", 'borderwidth': 1, 'bordercolor': "#2b3139",
+                'steps': [
+                    {'range': [0, 25], 'color': '#1e2026'},     
+                    {'range': [25, 55], 'color': '#1b2d2a'},    
+                    {'range': [55, 75], 'color': '#163d2c'},    
+                    {'range': [75, 100], 'color': '#3a1e22'}    
+                ],
+            }
+        ))
+        fig_gauge.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font={'color': "#eaecef", 'family': "Arial"}, height=220, margin=dict(t=10, b=10, l=10, r=10))
+        st.plotly_chart(fig_gauge, use_container_width=True, config={'displayModeBar': False})
+
+        if not df_weekly.empty:
+            st.markdown(f"""
+                <div style="font-size: 14px; font-weight: 600; color: #eaecef; margin: 25px 0 10px 0; display:flex; align-items:center; gap:8px;">
+                    📈 長線跨週期趨勢矩陣 (當前 200WMA 支撐位: <span style="color:#f6465d; font-family:monospace;">${ma200_w_current:,.2f}</span>)
+                </div>
+            """, unsafe_allow_html=True)
+            
+            df_plot = df_weekly.dropna().copy()
+            fig_trend = go.Figure()
+            fig_trend.add_trace(go.Scatter(x=df_plot['Date'], y=df_plot['Close'], mode='lines', name='比特幣現貨價格', line=dict(color='#f3ba2f', width=2)))
+            fig_trend.add_trace(go.Scatter(x=df_plot['Date'], y=df_plot['200WMA'], mode='lines', name='200週移動平均生死線', line=dict(color='#f6465d', width=1.5, dash='dash')))
+            
+            fig_trend.update_layout(
+                paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+                xaxis=dict(showgrid=False, tickfont=dict(color="#848e9c"), title=""),
+                yaxis=dict(showgrid=True, gridcolor='#2b3139', tickfont=dict(color="#848e9c"), type="log"),
+                height=300, margin=dict(l=0, r=0, t=10, b=0),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, font=dict(color="#848e9c", size=11))
+            )
+            st.plotly_chart(fig_trend, use_container_width=True, config={'displayModeBar': False})
+
+    with col_right:
+        st.markdown(f'<div style="background: #181a20; padding: 22px; border-radius: 12px; border: 1px solid #2b3139; margin-bottom: 20px; text-align: center;"><div style="font-size: 15px; color: #848e9c; font-weight: 600; letter-spacing: 1px;">🎯 經理人多因子總得分</div><div class="score-display">{total_score:.1f} <span style="font-size:20px; color:#474d57;">/ 100 分</span></div></div>', unsafe_allow_html=True)
+        
+        def get_ui_badge(score, max_score):
+            ratio = score / max_score if max_score > 0 else 0
+            if ratio < 0.3: return '<span class="badge badge-gray">🔴 正常震盪 / 暫無訊號</span>'
+            if ratio < 0.65: return '<span class="badge badge-yellow">🟡 波動放大 / 蓄勢觀察</span>'
+            return '<span class="badge badge-green">🟢 極度超跌 / 觸發左側抄底</span>'
+
+        st.markdown(f"""
+            <div class="metric-card"><div class="metric-title"><span>【重磅生死線】200週線大底防線 [s8] (權重: 20%)</span> {get_ui_badge(s8, 20.0)}</div><div class="metric-value">{s8:.1f} / 20.0 分 <span style="font-size:12px; color:#848e9c; font-weight:normal; margin-left:10px;">歷史長線支撐防禦度</span></div></div>
+            <div class="metric-card"><div class="metric-title"><span>【美股風向球】MSTR 精密對齊 mNAV 溢價指標 [s7] (權重: 15%)</span> {get_ui_badge(s7, 15.0)}</div><div class="metric-value">{s7:.1f} / 15.0 分 <span style="font-size:12px; color:#848e9c; font-weight:normal; margin-left:10px;">當前美股實際溢價: {mstr_premium_rate:.2f} 倍</span></div></div>
+            <div class="metric-card"><div class="metric-title"><span>【衍生品關卡】合約多空資金費率 [s6] (權重: 15%)</span> {get_ui_badge(s6, 15.0)}</div><div class="metric-value">{s6:.1f} / 15.0 分 <span style="font-size:12px; color:#848e9c; font-weight:normal; margin-left:10px;">當前即時資金費率: {funding_rate*100:+.4f}%</span></div></div>
+            <div class="metric-card"><div class="metric-title"><span>【韭菜探針】市場散戶恐懼情緒 [s5] (權重: 15%)</span> {get_ui_badge(s5, 15.0)}</div><div class="metric-value">{s5:.1f} / 15.0 分 <span style="font-size:12px; color:#848e9c; font-weight:normal; margin-left:10px;">當前市場波動對應讀數: {fng_value}</span></div></div>
+            <div class="metric-card"><div class="metric-title"><span>【成本拉力】大盤生命線偏離度 [s2] (權重: 10%)</span> {get_ui_badge(s2, 10.0)}</div><div class="metric-value">{s2:.1f} / 10.0 分 <span style="font-size:12px; color:#848e9c; font-weight:normal; margin-left:10px;">離 60 日均線的負乖離比例</span></div></div>
+            <div class="metric-card"><div class="metric-title"><span>【時空定位】四年減半週期進度規規律 [s9] (權重: 10%)</span> {get_ui_badge(s9, 10.0)}</div><div class="metric-value">{s9:.1f} / 10.0 分 <span style="font-size:12px; color:#848e9c; font-weight:normal; margin-left:10px;">長線歷史週期時間節點定位</span></div></div>
+            <div class="metric-card"><div class="metric-title"><span>【短期套牢】兩週散戶虧損洗盤 [s3] (權重: 5%)</span> {get_ui_badge(s3, 5.0)}</div><div class="metric-value">{s3:.1f} / 5.0 分 <span style="font-size:12px; color:#848e9c; font-weight:normal; margin-left:10px;">14天追高籌碼被清洗程度</span></div></div>
+            <div class="metric-card"><div class="metric-title"><span>【恐懼割肉】今日盤中下殺強度 [s4] (權重: 5%)</span> {get_ui_badge(s4, 5.0)}</div><div class="metric-value">{s4:.1f} / 5.0 分 <span style="font-size:12px; color:#848e9c; font-weight:normal; margin-left:10px;">24小時內多殺多閃崩幅度</span></div></div>
+            <div class="metric-card"><div class="metric-title"><span>【日內微調】今日撿便宜便宜度 [s1] (權重: 5%)</span> {get_ui_badge(s1, 5.0)}</div><div class="metric-value">{s1:.1f} / 5.0 分 <span style="font-size:12px; color:#848e9c; font-weight:normal; margin-left:10px;">市價接近今日插針最低點鄰近度</span></div></div>
+        """, unsafe_allow_html=True)
+
+    # ==========================================
+    # 🆕 網頁最下方加入所有指標的詳細定義與數據來源（移除 f-string 防禦公式報錯）
+    # ==========================================
+    st.markdown("---")
+    with st.expander("🔬 🔍 全套 9 因子量化核心指標定義與數據來源說明書（對沖基金級）"):
+        st.markdown("""
+        ### 📊 核心加權計分邏輯說明
+        本模型共由 9 個宏觀、微觀、衍生品以及情緒層面的量化因子組成，總分為 100 分。當**總得分 > 55 分**時，系統判定市場進入極度超跌區，左側抄底勝率顯著提升。
+        
+        ---
+        
+        ### 🧬 各量化指標詳細定義與數據源
+        
+        #### **1. 【重磅生死線】200週線大底防線 [s8]**
+        * **權重比例**：20%（最高權重）
+        * **量化公式**：$$s_8 = \max\left(0.0, \min\left(20.0, \frac{0.05 - \text{dist}_{200w}}{0.10} \times 20.0\right)\right)$$，其中 dist_200w 為現貨價偏離 200WMA 的比例。
+        * **核心定義**：評估當前價格與比特幣歷史最長線的週期生死線（200 週移動平均線）的相對距離。越接近甚至跌破 200WMA，分數越高。
+        * **數據來源**：`yfinance` 跨市場週線歷史資料庫（`BTC-USD`）。
+        
+        #### **2. 【美股風向球】MSTR 實際 mNAV 溢價指標 [s7]**
+        * **權重比例**：15%
+        * **量化公式**：$$\text{estimated\_nav} = \text{btc\_price} \times 0.0046228$$
+        * **計分公式**：$$s_7 = \max\left(0.0, \min\left(15.0, \frac{2.5 - \text{premium\_rate}}{1.5} \times 15.0\right)\right)$$
+        * **核心定義**：精確對齊 MicroStrategy 2026 年最新官方財報申報（持倉 843,706 BTC / 基本流通股數 182,510,000 股）。當美股市場溢價倍數下降（泡沫擠出），代表機構資金情緒回歸理性，左側安全邊際擴大。
+        * **數據來源**：`yfinance` 即時美股報價（`MSTR`）與微策略 SEC 官方財報申報資料。
+        
+        #### **3. 【衍生品關卡】永續合約多空資金費率 [s6]**
+        * **權重比例**：15%
+        * **量化公式**：$$s_6 = \max\left(0.0, \min\left(15.0, \frac{0.0001 - \text{funding\_rate}}{0.0004} \times 15.0\right)\right)$$
+        * **核心定義**：追蹤加密市場永續合約槓桿多頭的支付成本。當費率降至基準線 0.01% 以下甚至出現負費率時，意味著多頭槓桿已清算完畢，市場極易發生空頭擠壓（Short Squeeze）反彈。
+        * **數據來源**：幣安期貨 SDK 官方即時串流資料（`Binance CM-Futures API - BTCUSD_PERP`）。
+        
+        #### **4. 【韭菜探針】市場散戶恐懼情緒 [s5]**
+        * **權重比例**：15%
+        * **量化公式**：將美股 VIX 隱含波動率與加密市場情緒進行特徵對齊，映射至 10 - 90 的區間。
+        * **核心定義**：量化散戶的恐懼與貪婪程度。當讀數越低（極度恐懼），代表市場割肉盤湧現，符合「在別人恐懼時我貪婪」的反向抄底邏輯。
+        * **數據來源**：`yfinance` 芝加哥期權交易所波動率指數（`^VIX`）。
+        
+        #### **5. 【成本拉力】大盤生命線 MA60 負乖離 [s2]**
+        * **權重比例**：10%
+        * **核心定義**：計算現貨價格相對於 60 日均線（大盤中期生命線）的偏離程度。負乖離越大，均值回歸的拉力越強。
+        * **數據來源**：`yfinance` 日線歷史資料庫。
+        
+        #### **6. 【時空定位】四年減半週期時空定位 [s9]**
+        * **權重比例**：10%
+        * **核心定義**：以 2024 年 4 月 20 日減半時間為起點，將 1,460 天的減半週期進行時空進度定位，量化歷史牛熊大週期的時間節點規律。
+        * **數據來源**：鏈上歷史減半區塊時間戳。
+        
+        #### **7. 【短期套牢】兩週散戶虧損洗盤 [s3]**
+        * **權重比例**：5%
+        * **核心定義**：比對當前價格與 14 天前價格，量化兩週內追高籌碼被清洗的幅度，判斷短線拋壓是否衰竭。
+        * **數據來源**：`yfinance` 日線歷史資料庫。
+        
+        #### **8. 【恐懼割肉】今日盤中瀑布下殺強度 [s4]**
+        * **權重比例**：5%
+        * **核心定義**：監控過去 24 小時內的日內下殺速度與跌幅，捕捉恐懼盤踩踏（多殺多）時的極端插針動能。
+        * **數據來源**：`yfinance` 分鐘級即時流數據。
+        
+        #### **9. 【日內微調】今日撿便宜便宜度 [s1]**
+        * **權重比例**：5%
+        * **核心定義**：計算當前市價與今日盤中最高點、最低點的相對位置。當市價極度逼近今日插針最低點時，該微觀分值會拿到滿分。
+        * **數據來源**：`yfinance` 分鐘級即時流數據。
+        """)
+
+# ==========================================
+# 5. 分頁 B：文元萌化版
+# ==========================================
+else:
+    st.markdown("""
+        <style>
+        html, body, [data-testid="stAppViewContainer"] {
+            background-color: #fff5f5 !important;
+            color: #4a4a4a !important;
+            font-family: 'PingFang TC', system-ui, sans-serif;
+        }
+        [data-testid="stHeader"] { background: rgba(0,0,0,0); }
+        footer {visibility: hidden;}
+        
+        .cute-card {
+            background: #ffffff;
+            border: 3px solid #ffb6c1;
+            border-radius: 20px;
+            padding: 20px;
+            margin-bottom: 15px;
+            box-shadow: 0 8px 16px rgba(255, 182, 193, 0.2);
+            transition: all 0.3s ease;
+        }
+        .cute-card:hover {
+            transform: scale(1.01);
+            box-shadow: 0 10px 20px rgba(255, 182, 193, 0.4);
+        }
+        .cute-title {
+            font-size: 16px;
+            color: #ff69b4;
+            font-weight: bold;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .cute-value {
+            font-size: 14px;
+            color: #555555;
+            margin-top: 8px;
+            line-height: 1.5;
+        }
+        .cute-badge {
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        .badge-sleep { background-color: #f3f3f3; color: #9b9b9b; border: 1px solid #ddd; }
+        .badge-watch { background-color: #ffeaa7; color: #d63031; border: 1px solid #f1c40f; }
+        .badge-buy { background-color: #ff7675; color: #ffffff; }
+        
+        .heart-score-display {
+            font-size: 56px;
+            font-weight: bold;
+            color: #ff69b4;
+            font-family: system-ui, sans-serif;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+    
+    st.markdown("""
+        <div style="text-align: center; padding: 10px 0; border-bottom: 3px dashed #ffb6c1; margin-bottom: 25px;">
+            <div style="font-size: 26px; font-weight: bold; color: #ff69b4;">💖 文元專屬：比特幣「能不能買包包」終極防割监控儀表板</div>
+            <div style="font-size: 14px; color: #7f8c8d; margin-top: 8px;">👩‍🏫 <b>魏文元專屬小叮嚀：</b>老公有沒有亂買看這裡就對了！</div>
+        </div>
+    """, unsafe_allow_html=True)
+    
+    col_left, col_right = st.columns([1, 1])
+    
+    with col_left:
+        delta_emoji = "📈 太棒了寶貝！" if "-" not in price_delta_str else "📉 跌倒了拍拍："
+        delta_color = "#2ecc71" if "-" not in price_delta_str else "#e74c3c"
+        st.markdown(f"""
+            <div style="background: white; padding: 25px; border-radius: 20px; border: 3px solid #ffb6c1; text-align: center;">
+                <div style="font-size: 16px; color: #7f8c8d; font-weight: bold;">🪙 比特幣現在的價格 (BTC/USD)</div>
+                <div style="font-size: 46px; font-weight: bold; color: #ff69b4; margin: 10px 0; font-family: monospace;">${btc_price:,.2f}</div>
+                <div style="font-size: 16px; font-weight: bold; color: {delta_color};">{delta_emoji} {price_delta_str}</div>
+            </div>
+        """, unsafe_allow_html=True)
+        
+        if total_score < 30:
+            advice_title, advice_desc = "❌ 先去睡覺，千萬不要動！", "現在市場大家都瘋了在亂買，進去就是當韭菜送人頭。現在敢亂買的話，直接罰老公去跪算盤！"
+        elif total_score < 60:
+            advice_title, advice_desc = "👀 搬小板凳，坐著看戲就好", "市場現在有點小震盪、不上不下的。我們繼續優雅地喝貴婦下午茶，等真正大特價再說。"
+        else:
+            advice_title, advice_desc = "🛍️ 限時大特價！百貨週年慶衝啊！", "傳說中的全宇宙打折季來了！大家都嚇到把寶貝亂扔，現在正是叫老公去撿便宜、幫我們賺包包基金的黃金時刻！"
+        
+        st.markdown(f"""
+            <br>
+            <div style="background: linear-gradient(135deg, #fff0f5 0%, #ffe4e1 100%); padding: 30px; border-radius: 25px; border: 3px solid #ff69b4; text-align: center;">
+                <div style="font-size: 18px; color: #db7093; font-weight: bold;">🛍️ 當前能不能撿便宜指數</div>
+                <div class="heart-score-display">❤️ {total_score:.1f} <span style="font-size:22px; color:#db7093;">/ 100 滿分</span></div>
+                <div style="margin-top: 15px; padding: 15px; background: white; border-radius: 15px; border: 2px solid #ffb6c1;">
+                    <div style="font-size: 18px; font-weight: bold; color: #e74c3c;">{advice_title}</div>
+                    <div style="font-size: 14px; color: #555555; margin-top: 8px; line-height: 1.6;">{advice_desc}</div>
+                </div>
+            </div>
+        """, unsafe_allow_html=True)
+
+    with col_right:
+        def get_cute_badge(score, max_score):
+            ratio = score / max_score if max_score > 0 else 0
+            if ratio >= 0.65: return '<span class="cute-badge badge-buy">🔥 百貨週年慶衝啊！</span>'
+            if ratio >= 0.3: return '<span class="cute-badge badge-watch">🧐 有點風吹草動</span>'
+            return '<span class="cute-badge badge-sleep">💤 大家都還在睡</span>'
+        
+        st.markdown(f"""
+            <div class="cute-card">
+                <div class="cute-title"><span>🩸 歷史級終極防禦大鐵底 [s8]</span> {get_cute_badge(s8, 20.0)}</div>
+                <div class="cute-value">
+                    <b>特價得分：{s8:.1f} / 20.0 滿分</b><br>
+                    <span style="color:#7f8c8d; font-size:13px;">💡 白話文解釋：跌到這裡就是到了幾年才一次的地下室清倉價！局內巨鯨都在這偷偷買，非常安全。</span>
+                </div>
+            </div>
+            
+            <div class="cute-card">
+                <div class="cute-title"><span>🤡 美股大韭菜有沒有吹泡泡 [s7]</span> {get_cute_badge(s7, 15.0)}</div>
+                <div class="cute-value">
+                    <b>特價得分：{s7:.1f} / 15.0 滿分</b><br>
+                    <span style="color:#7f8c8d; font-size:13px;">💡 白話文解釋：看美股微策略（MSTR）實際溢價（目前溢價：{mstr_premium_rate:.2f} 倍）。數字越低代表美股泡沫越小，對齊 2026 最新官方股數申報。</span>
+                </div>
+            </div>
+            
+            <div class="cute-card">
+                <div class="cute-title"><span>💥 全網賭徒有沒有被抬出去 [s6]</span> {get_cute_badge(s6, 15.0)}</div>
+                <div class="cute-value">
+                    <b>特價得分：{s6:.1f} / 15.0 滿分</b><br>
+                    <span style="color:#7f8c8d; font-size:13px;">💡 白話文解釋：當賭徒被斷頭清光（資金費率變低），就是我們進場撿便宜、叫老公幫我們賺包包基金的黃金時刻！</span>
+                </div>
+            </div>
+            
+            <div class="cute-card">
+                <div class="cute-title"><span>😱 全網散戶是不是嚇到發抖 [s5]</span> {get_cute_badge(s5, 15.0)}</div>
+                <div class="cute-value">
+                    <b>特價得分：{s5:.1f} / 15.0 滿分</b><br>
+                    <span style="color:#7f8c8d; font-size:13px;">💡 白話文解釋：大盤越恐懼（當前讀數：{fng_value}），分數就越高，我們就要在旁邊優雅地看著，準備抄底。</span>
+                </div>
+            </div>
+        """, unsafe_allow_html=True)
