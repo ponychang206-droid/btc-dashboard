@@ -121,42 +121,42 @@ mstr_premium_rate = 1.20
 
 # 📊 2026 最新財報官方數據完全對齊
 MSTR_BTC_HOLDINGS = 843706         # 官方最新總持倉
-MSTR_SHARES_OUTSTANDING = 382756000 # 💎 關鍵修正：官方最新基本流通股數變更為 3.82 億股
-MSTR_AVG_COST = 75699              # 官方平均買入成本
-BTC_PER_SHARE = 0.0022043          # 💎 關鍵修正：對齊最新股數後的每股真實含幣量 (843,706 / 382,756,000)
+MSTR_SHARES_OUTSTANDING = 382756000 # 💎 基本流通股數（去泡沫化硬核分母，不計可轉債潛在稀釋）
+MSTR_AVG_COST = 75699               # 官方平均買入成本
+BTC_PER_SHARE = 0.0022043          # 對齊最新基本股數後的每股真實現貨含幣量 (843,706 / 382,756,000)
 
 if ticker_data is not None:
     btc_price = ticker_data['price']
     price_delta_str = f"{ticker_data['delta']:+.2f}%"
 
-    # s1: 日內微觀掛單最優便宜度
+    # s1: 日內微觀掛單最優便宜度 (滿分 5)
     p_range = ticker_data['high'] - ticker_data['low']
     s1 = (((ticker_data['high'] - btc_price) / p_range) * 5.0) if p_range > 0 else 2.5
     
-    # s2: 大盤生命線 MA60 負乖離
+    # s2: 大盤生命線 MA60 負乖離 (滿分 10)
     if len(daily_closes) >= 60:
         bias = (btc_price - np.mean(daily_closes[-60:])) / np.mean(daily_closes[-60:])
         s2 = max(0.0, min(10.0, (0.0 - bias) / 0.20 * 10.0))
     else: 
         s2 = 5.0
         
-    # s3: 14天散戶套牢洗盤度
+    # s3: 14天散戶套牢洗盤度 (滿分 5)
     if len(daily_closes) >= 14:
         r14 = (btc_price - daily_closes[-14]) / daily_closes[-14]
         s3 = max(0.0, min(5.0, (0.0 - r14) / 0.15 * 5.0))
     else: 
         s3 = 2.5
         
-    # s4: 今日盤中瀑布下殺強度
+    # s4: 今日盤中瀑布下殺強度 (滿分 5)
     s4 = max(0.0, min(5.0, (abs(ticker_data['delta']) / 5.0) * 5.0)) if ticker_data['delta'] < 0 else 0.0
     
-    # s5: 散戶恐懼貪婪情緒指數
+    # s5: 散戶恐懼貪婪情緒指數 (滿分 15)
     s5 = max(0.0, min(15.0, ((40.0 - float(fng_value)) / 30.0) * 15.0))
     
-    # s6: 永續合約多空資金費率
+    # s6: 永續合約多空資金費率 (滿分 15)
     s6 = max(0.0, min(15.0, ((0.0001 - funding_rate) / 0.0004) * 15.0))
     
-    # s7: MSTR 精確 mNAV 溢價指標
+    # s7: MSTR 靜態 mNAV 現貨溢價指標（嚴苛風控版）(滿分 15)
     if mstr_live_price is not None:
         estimated_nav = (btc_price * BTC_PER_SHARE) 
         mstr_premium_rate = mstr_live_price / estimated_nav if estimated_nav > 0 else 1.20
@@ -165,7 +165,7 @@ if ticker_data is not None:
         mstr_premium_rate = 1.20
         s7 = 13.0
         
-    # s8: 200週線大底防線
+    # s8: 200週線大底防線 (滿分 20)
     if not df_weekly.empty and len(df_weekly) >= 200:
         ma200_w_current = float(df_weekly.iloc[-1]['200WMA'])
         dist_200w = (btc_price - ma200_w_current) / ma200_w_current
@@ -174,7 +174,7 @@ if ticker_data is not None:
         ma200_w_current = btc_price * 0.7
         s8 = 10.0
         
-    # s9: 四年減半週期時空定位
+    # s9: 四年減半週期時空定位 (滿分 10)
     last_halving = datetime(2024, 4, 20)
     days_since_halving = (datetime.now() - last_halving).days
     cycle_progress = (days_since_halving % 1460) / 1460 
@@ -198,7 +198,7 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("### 📊 MSTR 官方資產負債表")
     st.info(f"🪙 持倉總量: {MSTR_BTC_HOLDINGS:,} BTC")
-    st.info(f"📜 流通股數: {MSTR_SHARES_OUTSTANDING:,} 股")
+    st.info(f"📜 基本流通股數: {MSTR_SHARES_OUTSTANDING:,} 股")
     st.info(f"📉 平均成本: ${MSTR_AVG_COST:,} USD")
     st.markdown("---")
 
@@ -206,7 +206,6 @@ with st.sidebar:
 # 4. 分頁 A：直男量化經理人版
 # ==========================================
 if page == "直男量化經理人版":
-    # 使用標準 Markdown 與變數注入，完全移除容易報錯的 f"" 引號
     st.markdown("""
         <style>
         html, body, [data-testid="stAppViewContainer"] {
@@ -267,7 +266,7 @@ if page == "直男量化經理人版":
     st.markdown(f"""
         <div style="display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 1px solid #2b3139; margin-bottom: 25px;">
             <div style="font-size: 24px; font-weight: 700; color: #eaecef; display: flex; align-items: center; gap: 10px;">
-                <span style="color: #f3ba2f;">🔮</span> BTC 9 因子抄底監控看板 (財報增發精準對齊版)
+                <span style="color: #f3ba2f;">🔮</span> BTC 9 因子抄底監控看板 (財報去泡沫嚴苛核算版)
             </div>
             <div style="font-size: 12px; color: #848e9c; text-align: right;">
                 系統狀態：<span style="color: #0ecb81; font-weight: bold;">● SDK 即時串流中</span><br>
@@ -342,15 +341,15 @@ if page == "直男量化經理人版":
             return '<span class="badge badge-green">🟢 極度超跌 / 觸發左側抄底</span>'
 
         st.markdown(f"""
-            <div class="metric-card"><div class="metric-title"><span>【重磅生死線】200週線大底防線 [s8] (權重: 20%)</span> {get_ui_badge(s8, 20.0)}</div><div class="metric-value">{s8:.1f} / 20.0 分 <span style="font-size:12px; color:#848e9c; font-weight:normal; margin-left:10px;">歷史長線支撐防禦度</span></div></div>
-            <div class="metric-card"><div class="metric-title"><span>【美股風向球】MSTR 精密對齊 mNAV 溢價指標 [s7] (權重: 15%)</span> {get_ui_badge(s7, 15.0)}</div><div class="metric-value">{s7:.1f} / 15.0 分 <span style="font-size:12px; color:#848e9c; font-weight:normal; margin-left:10px;">當前美股實際溢價: {mstr_premium_rate:.2f} 倍 (精確校正動態增發)</span></div></div>
-            <div class="metric-card"><div class="metric-title"><span>【衍生品關卡】合約多空資金費率 [s6] (權重: 15%)</span> {get_ui_badge(s6, 15.0)}</div><div class="metric-value">{s6:.1f} / 15.0 分 <span style="font-size:12px; color:#848e9c; font-weight:normal; margin-left:10px;">當前即時資金費率: {funding_rate*100:+.4f}%</span></div></div>
-            <div class="metric-card"><div class="metric-title"><span>【韭菜探針】市場散戶恐懼情緒 [s5] (權重: 15%)</span> {get_ui_badge(s5, 15.0)}</div><div class="metric-value">{s5:.1f} / 15.0 分 <span style="font-size:12px; color:#848e9c; font-weight:normal; margin-left:10px;">當前市場波動對應讀數: {fng_value}</span></div></div>
-            <div class="metric-card"><div class="metric-title"><span>【成本拉力】大盤生命線偏離度 [s2] (權重: 10%)</span> {get_ui_badge(s2, 10.0)}</div><div class="metric-value">{s2:.1f} / 10.0 分 <span style="font-size:12px; color:#848e9c; font-weight:normal; margin-left:10px;">離 60 日均線的負乖離比例</span></div></div>
-            <div class="metric-card"><div class="metric-title"><span>【時空定位】四年減半週期進度規規律 [s9] (權重: 10%)</span> {get_ui_badge(s9, 10.0)}</div><div class="metric-value">{s9:.1f} / 10.0 分 <span style="font-size:12px; color:#848e9c; font-weight:normal; margin-left:10px;">長線歷史週期時間節點定位</span></div></div>
-            <div class="metric-card"><div class="metric-title"><span>【短期套牢】兩週散戶虧損洗盤 [s3] (權重: 5%)</span> {get_ui_badge(s3, 5.0)}</div><div class="metric-value">{s3:.1f} / 5.0 分 <span style="font-size:12px; color:#848e9c; font-weight:normal; margin-left:10px;">14天追高籌碼被清洗程度</span></div></div>
-            <div class="metric-card"><div class="metric-title"><span>【恐懼割肉】今日盤中下殺強度 [s4] (權重: 5%)</span> {get_ui_badge(s4, 5.0)}</div><div class="metric-value">{s4:.1f} / 5.0 分 <span style="font-size:12px; color:#848e9c; font-weight:normal; margin-left:10px;">24小時內多殺多閃崩幅度</span></div></div>
-            <div class="metric-card"><div class="metric-title"><span>【日內微調】今日撿便宜便宜度 [s1] (權重: 5%)</span> {get_ui_badge(s1, 5.0)}</div><div class="metric-value">{s1:.1f} / 5.0 分 <span style="font-size:12px; color:#848e9c; font-weight:normal; margin-left:10px;">市價接近今日插針最低點鄰近度</span></div></div>
+            <div class="metric-card"><div class="metric-title"><span>【重磅生死線】200週線大底防線 [s8] (權重: 20%)</span> {get_ui_badge(s8, 20.0)}</div><div class="metric-value">{s8:.1f} / 20.0 分 <span style="font-size:12px; color:#848e9c; font-weight:normal; margin-left:10px;">歷史長線終極防禦支撐位</span></div></div>
+            <div class="metric-card"><div class="metric-title"><span>【美股風向球】MSTR 靜態 mNAV 現貨溢價指標 [s7] (權重: 15%)</span> {get_ui_badge(s7, 15.0)}</div><div class="metric-value">{s7:.1f} / 15.0 分 <span style="font-size:12px; color:#848e9c; font-weight:normal; margin-left:10px;">當前去泡沫靜態溢價: {mstr_premium_rate:.2f} 倍 (基本股數計)</span></div></div>
+            <div class="metric-card"><div class="metric-title"><span>【衍生品關卡】永續合約多空資金費率 [s6] (權重: 15%)</span> {get_ui_badge(s6, 15.0)}</div><div class="metric-value">{s6:.1f} / 15.0 分 <span style="font-size:12px; color:#848e9c; font-weight:normal; margin-left:10px;">當前即時資金費率: {funding_rate*100:+.4f}%</span></div></div>
+            <div class="metric-card"><div class="metric-title"><span>【韭菜探針】市場散戶恐懼情緒 [s5] (權重: 15%)</span> {get_ui_badge(s5, 15.0)}</div><div class="metric-value">{s5:.1f} / 15.0 分 <span style="font-size:12px; color:#848e9c; font-weight:normal; margin-left:10px;">VIX反向推算散戶恐懼讀數: {fng_value}</span></div></div>
+            <div class="metric-card"><div class="metric-title"><span>【成本拉力】大盤生命線偏離度 [s2] (權重: 10%)</span> {get_ui_badge(s2, 10.0)}</div><div class="metric-value">{s2:.1f} / 10.0 分 <span style="font-size:12px; color:#848e9c; font-weight:normal; margin-left:10px;">現價離 60 日均線(MA60)負乖離比例</span></div></div>
+            <div class="metric-card"><div class="metric-title"><span>【時空定位】四年減半週期進度規律 [s9] (權重: 10%)</span> {get_ui_badge(s9, 10.0)}</div><div class="metric-value">{s9:.1f} / 10.0 分 <span style="font-size:12px; color:#848e9c; font-weight:normal; margin-left:10px;">歷史牛熊週期時間節點定位</span></div></div>
+            <div class="metric-card"><div class="metric-title"><span>【短期套牢】兩週散戶虧損洗盤 [s3] (權重: 5%)</span> {get_ui_badge(s3, 5.0)}</div><div class="metric-value">{s3:.1f} / 5.0 分 <span style="font-size:12px; color:#848e9c; font-weight:normal; margin-left:10px;">14天內追高籌碼被清洗折價度</span></div></div>
+            <div class="metric-card"><div class="metric-title"><span>【恐懼割肉】今日盤中下殺強度 [s4] (權重: 5%)</span> {get_ui_badge(s4, 5.0)}</div><div class="metric-value">{s4:.1f} / 5.0 分 <span style="font-size:12px; color:#848e9c; font-weight:normal; margin-left:10px;">24小時內日內多殺多閃崩幅度</span></div></div>
+            <div class="metric-card"><div class="metric-title"><span>【日內微調】今日撿便宜便宜度 [s1] (權重: 5%)</span> {get_ui_badge(s1, 5.0)}</div><div class="metric-value">{s1:.1f} / 5.0 分 <span style="font-size:12px; color:#848e9c; font-weight:normal; margin-left:10px;">市價與今日插針最低點鄰近度</span></div></div>
         """, unsafe_allow_html=True)
 
     st.markdown("---")
@@ -363,21 +362,40 @@ if page == "直男量化經理人版":
         ### 🧬 各量化指標詳細定義與數據源
         
         #### **1. 【重磅生死線】200週線大底防線 [s8]**
-        * **權重比例**：20%（最高權重）
-        * **數據來源**：`yfinance` 跨市場週線歷史資料庫（`BTC-USD`）。
+        * **因子定義**：計算比特幣現價與 **200週移動平均線 (200WMA)** 的偏離比例。歷史上，200週線是比特幣多輪大熊市（如2018、2022年）的「終極鋼鐵大底」。越接近該線，防禦價值與抄底得分越高。
+        * **數據來源**：`yfinance` 跨市場週線歷史資料庫（代號：`BTC-USD`）。
         
-        #### **2. 【美股風向球】MSTR 實際 mNAV 溢價指標 [s7]**
-        * **權重比例**：15%
-        * **核心定義**：精密對齊 MicroStrategy 最新財報申報與動態增發（持倉 843,706 BTC / 流通基本股數 382,756,000 股，每股真實代表 0.0022043 BTC）。
-        * **數據來源**：`yfinance` 即時美股報價（`MSTR`）。
+        #### **2. 【美股風向球】MSTR 靜態 mNAV 現貨溢價指標 [s7]**
+        * **因子定義**：**此指標採用最嚴苛之「去泡沫化」風控標準。** 排除華爾街牛市預期之未轉換可轉債，直接採用微策略（MicroStrategy）當前最新的基本流通股數（3.82756億股）作為分母，核算出每股實打實持有的 0.0022043 BTC 現貨清算淨值。當溢價跌破 1（如 0.87）時，代表美股已對現貨出現非理性折價，触發左側高分抄底。
+        * **數據來源**：`yfinance` 美股即時報價（代號：`MSTR`）對齊最新申報財報結構。
         
         #### **3. 【衍生品關卡】永續合約多空資金費率 [s6]**
-        * **權重比例**：15%
-        * **數據來源**：幣安期貨 SDK 官方即時串流資料（`Binance CM-Futures API`）。
+        * **因子定義**：監控加密衍生品市場的多空槓桿平衡狀態。當資金費率為大幅正數時，代表多頭過熱；當**資金費率轉負（Negative Funding Rate）**或極度萎縮時，代表市場多頭完成爆倉清算、散戶瘋狂做空，為經典的現貨右側反彈/左側抄底訊號。
+        * **數據來源**：幣安期貨 SDK 官方即時合約串流（代號：`Binance CM-Futures API` 的 `BTCUSD_PERP` 數據）。
         
         #### **4. 【韭菜探針】市場散戶恐懼情緒 [s5]**
-        * **權重比例**：15%
-        * **數據來源**：`yfinance` 芝加哥期權交易所波動率指數（`^VIX`）。
+        * **因子定義**：傳統加密市場 Fear & Greed 請求極易因海外節點遭到 Cloudflare 封鎖而卡死。本看板創新採用**美股 CBOE 波動率指數 (VIX)** 進行反向映射與平滑去噪，精準捕捉跨市場宏觀資金的非理性恐慌程度。VIX 越高，映射出的恐懼情緒越強，抄底得分越高。
+        * **數據來源**：`yfinance` 芝加哥期權交易所波动率指數（代號：`^VIX`）。
+        
+        #### **5. 【成本拉力】大盤生命線偏離度 [s2]**
+        * **因子定義**：計算現價與 **60日均線（MA60，大盤中線生命線）** 的負乖離率（Bias）。當現價低於 MA60 超過 20% 時，意味著市場短期出現了非理性的「超賣瀑布」，成本拉力回歸動能極強。
+        * **數據來源**：`yfinance` 日線歷史價格資料庫滾動計算。
+        
+        #### **6. 【時空定位】四年減半週期進度規律 [s9]**
+        * **因子定義**：基於比特幣每 1460 天減半一次的硬編碼規律。模型自動動態計算當前距離 2024 年 4 月 20 日已知減半日的時空進度。在週期第 500 天至 800 天的傳統「熊市築底與大洗盤區間」，模型會賦予極具防守性的週期時間分。
+        * **數據來源**：本地時間引擎（`datetime.now()`）與歷史減半時間軸精確矩陣計算。
+        
+        #### **7. 【短期套牢】兩週散戶虧損洗盤 [s3]**
+        * **因子定義**：計算當前價格與 14 天前（兩週前）收盤價的相對回撤比例。用以量化「近兩週內衝進去追高的散戶籌碼」目前被深套、清洗的痛苦程度。回撤越大，代表浮動追高籌碼被洗得越乾淨。
+        * **數據來源**：`yfinance` 日線近兩週歷史回溯。
+        
+        #### **8. 【恐懼割肉】今日盤中下殺強度 [s4]**
+        * **因子定義**：捕捉 24 小時內極短線的多殺多閃崩幅度。若單日跌幅下殺接近或超過 5%，系統會判定日內恐慌盤、機器人止損盤已經被強行逼出，屬於高勝率的「插針撿便宜」時機。
+        * **數據來源**：`yfinance` 當日即時跨開盤價變動比例（`delta`）。
+        
+        #### **9. 【日內微調】今日撿便宜便宜度 [s1]**
+        * **因子定義**：微觀插針指標。計算目前最新即時價處於今日最高點與最低點震盪區間（High-Low Range）的哪一個相對位置。當價格無限逼近今日插針最低點時，s1 因子將逼近 5 分滿分，提供精確到分鐘級的掛單優勢。
+        * **數據來源**：`yfinance` 每 5 分鐘滾動的日內極高/極低價串流。
         """)
 
 # ==========================================
@@ -499,7 +517,7 @@ else:
                 <div class="cute-title"><span>🤡 美股大韭菜有沒有吹泡泡 [s7]</span> {get_cute_badge(s7, 15.0)}</div>
                 <div class="cute-value">
                     <b>特價得分：{s7:.1f} / 15.0 滿分</b><br>
-                    <span style="color:#7f8c8d; font-size:13px;">💡 目前已精確同步最新增發財報（動態溢價：{mstr_premium_rate:.2f} 倍）。數字越低泡沫越小。</span>
+                    <span style="color:#7f8c8d; font-size:13px;">💡 目前已精確同步最新基本股數（去泡沫硬核溢價：{mstr_premium_rate:.2f} 倍）。數字越低泡沫越小，對我們越安全！</span>
                 </div>
             </div>
         """, unsafe_allow_html=True)
