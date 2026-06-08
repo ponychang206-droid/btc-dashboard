@@ -4,6 +4,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import yfinance as yf
 from datetime import datetime
+from zoneinfo import ZoneInfo  # 💎 引入標準時區庫，精確鎖定台北時間
 from binance.cm_futures import CMFutures  # 替代原有的 fapi 請求
 
 # ==========================================
@@ -14,6 +15,9 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"  # 強制初始展開側邊欄
 )
+
+# 設定台北時區常數
+TAIPEI_TZ = ZoneInfo("Asia/Taipei")
 
 # ==========================================
 # 1. 數據抓取模組 (完全移除 requests，改用極穩定的 SDK 與 yfinance)
@@ -174,9 +178,10 @@ if ticker_data is not None:
         ma200_w_current = btc_price * 0.7
         s8 = 10.0
         
-    # s9: 四年減半週期時空定位 (滿分 10)
-    last_halving = datetime(2024, 4, 20)
-    days_since_halving = (datetime.now() - last_halving).days
+    # s9: 四年減半週期時空定位 (滿分 10) ── 🛠️ 已同步為台北時間計算
+    last_halving = datetime(2024, 4, 20, tzinfo=TAIPEI_TZ)
+    now_taipei = datetime.now(TAIPEI_TZ)
+    days_since_halving = (now_taipei - last_halving).days
     cycle_progress = (days_since_halving % 1460) / 1460 
     if 500 <= days_since_halving % 1460 <= 800:
         s9 = max(0.0, min(5.0, (1.0 - cycle_progress) * 10.0))
@@ -261,7 +266,8 @@ if page == "直男量化經理人版":
     """, unsafe_allow_html=True)
 
     delta_color = "#0ecb81" if "-" not in price_delta_str else "#f6465d"
-    current_time_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    # 🛠️ 已將看板上顯示的時間強制格式化為台北時間
+    current_time_str = datetime.now(TAIPEI_TZ).strftime('%Y-%m-%d %H:%M:%S')
 
     st.markdown(f"""
         <div style="display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 1px solid #2b3139; margin-bottom: 25px;">
@@ -270,7 +276,7 @@ if page == "直男量化經理人版":
             </div>
             <div style="font-size: 12px; color: #848e9c; text-align: right;">
                 系統狀態：<span style="color: #0ecb81; font-weight: bold;">● SDK 即時串流中</span><br>
-                更新時間：{current_time_str}
+                更新時間：{current_time_str} (台北時間)
             </div>
         </div>
     """, unsafe_allow_html=True)
