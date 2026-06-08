@@ -1,6 +1,6 @@
-requests
 streamlit
 numpy
 pandas
 plotly
 yfinance
+binance-futures-connector
