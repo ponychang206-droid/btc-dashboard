@@ -123,11 +123,11 @@ price_delta_str = "0.00%"
 ma200_w_current = 0.0
 mstr_premium_rate = 1.20
 
-# 📊 2026 最新財報官方數據完全對齊
-MSTR_BTC_HOLDINGS = 843706         # 官方最新總持倉
-MSTR_SHARES_OUTSTANDING = 382756000 # 💎 基本流通股數（去泡沫化硬核分母，不計可轉債潛在稀釋）
-MSTR_AVG_COST = 75699               # 官方平均買入成本
-BTC_PER_SHARE = 0.0022043          # 對齊最新基本股數後的每股真實現貨含幣量 (843,706 / 382,756,000)
+# 📊 2026-06-08 最新申報動態財報數據全面精準對齊 (ADSO 稀釋基礎)
+MSTR_BTC_HOLDINGS = 845256          # 🎯 最新實打實總持倉
+MSTR_SHARES_OUTSTANDING = 384180000 # 💎 ADSO 調整後流通股數 (3.8418 億股)
+MSTR_AVG_COST = 75680               # 🎯 歷史總平均買入成本
+BTC_PER_SHARE = MSTR_BTC_HOLDINGS / MSTR_SHARES_OUTSTANDING  # 自動核算動態每股真含幣量 (~0.00220016 BTC / 220,016 Sats)
 
 if ticker_data is not None:
     btc_price = ticker_data['price']
@@ -160,7 +160,7 @@ if ticker_data is not None:
     # s6: 永續合約多空資金費率 (滿分 15)
     s6 = max(0.0, min(15.0, ((0.0001 - funding_rate) / 0.0004) * 15.0))
     
-    # s7: MSTR 靜態 mNAV 現貨溢價指標（嚴苛風控版）(滿分 15)
+    # s7: MSTR 靜態 mNAV 現貨溢價指標 [全面對齊最新 ADSO] (滿分 15)
     if mstr_live_price is not None:
         estimated_nav = (btc_price * BTC_PER_SHARE) 
         mstr_premium_rate = mstr_live_price / estimated_nav if estimated_nav > 0 else 1.20
@@ -201,10 +201,17 @@ with st.sidebar:
         index=0
     )
     st.markdown("---")
-    st.markdown("### 📊 MSTR 官方資產負債表")
+    st.markdown("### 📊 MSTR 最新全面稀釋資產清單")
     st.info(f"🪙 持倉總量: {MSTR_BTC_HOLDINGS:,} BTC")
-    st.info(f"📜 基本流通股數: {MSTR_SHARES_OUTSTANDING:,} 股")
-    st.info(f"📉 平均成本: ${MSTR_AVG_COST:,} USD")
+    st.info(f"📜 調整後稀釋流通股數(ADSO): {MSTR_SHARES_OUTSTANDING:,} 股")
+    st.info(f"📉 歷史總平均成本: ${MSTR_AVG_COST:,} USD")
+    
+    # 側邊欄動態即時損益核算
+    if btc_price > 0:
+        current_pnl_usd = (btc_price - MSTR_AVG_COST) * MSTR_BTC_HOLDINGS
+        pnl_billion = current_pnl_usd / 1e9
+        pnl_color = "green" if current_pnl_usd >= 0 else "red"
+        st.markdown(f"💼 MSTR 持倉即時損益：<span style='color:{pnl_color}; font-weight:bold;'>${pnl_billion:.2f} B USD</span>", unsafe_allow_html=True)
     st.markdown("---")
 
 # ==========================================
@@ -266,13 +273,12 @@ if page == "直男量化經理人版":
     """, unsafe_allow_html=True)
 
     delta_color = "#0ecb81" if "-" not in price_delta_str else "#f6465d"
-    # 🛠️ 已將看板上顯示的時間強制格式化為台北時間
     current_time_str = datetime.now(TAIPEI_TZ).strftime('%Y-%m-%d %H:%M:%S')
 
     st.markdown(f"""
         <div style="display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 1px solid #2b3139; margin-bottom: 25px;">
             <div style="font-size: 24px; font-weight: 700; color: #eaecef; display: flex; align-items: center; gap: 10px;">
-                <span style="color: #f3ba2f;">🔮</span> BTC 9 因子抄底監控看板 (財報去泡沫嚴苛核算版)
+                <span style="color: #f3ba2f;">🔮</span> BTC 9 因子抄底監控看板 (全面稀釋 ADSO 財務核算版)
             </div>
             <div style="font-size: 12px; color: #848e9c; text-align: right;">
                 系統狀態：<span style="color: #0ecb81; font-weight: bold;">● SDK 即時串流中</span><br>
@@ -348,7 +354,7 @@ if page == "直男量化經理人版":
 
         st.markdown(f"""
             <div class="metric-card"><div class="metric-title"><span>【重磅生死線】200週線大底防線 [s8] (權重: 20%)</span> {get_ui_badge(s8, 20.0)}</div><div class="metric-value">{s8:.1f} / 20.0 分 <span style="font-size:12px; color:#848e9c; font-weight:normal; margin-left:10px;">歷史長線終極防禦支撐位</span></div></div>
-            <div class="metric-card"><div class="metric-title"><span>【美股風向球】MSTR 靜態 mNAV 現貨溢價指標 [s7] (權重: 15%)</span> {get_ui_badge(s7, 15.0)}</div><div class="metric-value">{s7:.1f} / 15.0 分 <span style="font-size:12px; color:#848e9c; font-weight:normal; margin-left:10px;">當前去泡沫靜態溢價: {mstr_premium_rate:.2f} 倍 (基本股數計)</span></div></div>
+            <div class="metric-card"><div class="metric-title"><span>【美股風向球】MSTR 靜態 mNAV 現貨溢價指標 [s7] (權重: 15%)</span> {get_ui_badge(s7, 15.0)}</div><div class="metric-value">{s7:.1f} / 15.0 分 <span style="font-size:12px; color:#848e9c; font-weight:normal; margin-left:10px;">當前 ADSO 全稀釋溢價: {mstr_premium_rate:.2f} 倍 (含幣量: {BTC_PER_SHARE*1e8:,.0f} Sats/股)</span></div></div>
             <div class="metric-card"><div class="metric-title"><span>【衍生品關卡】永續合約多空資金費率 [s6] (權重: 15%)</span> {get_ui_badge(s6, 15.0)}</div><div class="metric-value">{s6:.1f} / 15.0 分 <span style="font-size:12px; color:#848e9c; font-weight:normal; margin-left:10px;">當前即時資金費率: {funding_rate*100:+.4f}%</span></div></div>
             <div class="metric-card"><div class="metric-title"><span>【韭菜探針】市場散戶恐懼情緒 [s5] (權重: 15%)</span> {get_ui_badge(s5, 15.0)}</div><div class="metric-value">{s5:.1f} / 15.0 分 <span style="font-size:12px; color:#848e9c; font-weight:normal; margin-left:10px;">VIX反向推算散戶恐懼讀數: {fng_value}</span></div></div>
             <div class="metric-card"><div class="metric-title"><span>【成本拉力】大盤生命線偏離度 [s2] (權重: 10%)</span> {get_ui_badge(s2, 10.0)}</div><div class="metric-value">{s2:.1f} / 10.0 分 <span style="font-size:12px; color:#848e9c; font-weight:normal; margin-left:10px;">現價離 60 日均線(MA60)負乖離比例</span></div></div>
@@ -358,7 +364,29 @@ if page == "直男量化經理人版":
             <div class="metric-card"><div class="metric-title"><span>【日內微調】今日撿便宜便宜度 [s1] (權重: 5%)</span> {get_ui_badge(s1, 5.0)}</div><div class="metric-value">{s1:.1f} / 5.0 分 <span style="font-size:12px; color:#848e9c; font-weight:normal; margin-left:10px;">市價與今日插針最低點鄰近度</span></div></div>
         """, unsafe_allow_html=True)
 
+    # 🛠️ 補上核心風控與套利壓力測試模組 (完美延伸直男版深度)
     st.markdown("---")
+    st.subheader("🛡️ MSTR 全面稀釋清算價值與合理股價壓力測試模擬")
+    st.markdown("基於 2026-06-08 申報之最新 845,256 BTC 持倉與 3.8418 億股 ADSO 結構，模擬 BTC 在不同市場價格波動下的套利參考線：")
+    
+    if btc_price > 0:
+        price_steps = np.linspace(btc_price * 0.7, btc_price * 1.3, 7)
+        rows = []
+        for p in price_steps:
+            sim_nav_per_share = p * BTC_PER_SHARE
+            sim_mstr_at_current_premium = sim_nav_per_share * mstr_premium_rate
+            sim_pnl_billion = ((p - MSTR_AVG_COST) * MSTR_BTC_HOLDINGS) / 1e9
+            
+            rows.append({
+                "比特幣模擬現貨價 (USD)": f"${p:,.0f}",
+                "MSTR 持倉帳面總損益": f"${sim_pnl_billion:+.2f} B USD",
+                "靜態每股金本位資產淨值 (NAV)": f"${sim_nav_per_share:.2f}",
+                f"維持當前溢價 ({mstr_premium_rate:.2f}x) 目標股價": f"${sim_mstr_at_current_premium:.2f}",
+                "極端泡沫破裂 (1.0x 錨定價)": f"${sim_nav_per_share:.2f}"
+            })
+        df_stress = pd.DataFrame(rows)
+        st.table(df_stress)
+
     with st.expander("🔬 🔍 全套 9 因子量化核心指標定義與數據來源說明書（對沖基金級）"):
         st.markdown("""
         ### 📊 核心加權計分邏輯說明
@@ -372,8 +400,8 @@ if page == "直男量化經理人版":
         * **數據來源**：`yfinance` 跨市場週線歷史資料庫（代號：`BTC-USD`）。
         
         #### **2. 【美股風向球】MSTR 靜態 mNAV 現貨溢價指標 [s7]**
-        * **因子定義**：**此指標採用最嚴苛之「去泡沫化」風控標準。** 排除華爾街牛市預期之未轉換可轉債，直接採用微策略（MicroStrategy）當前最新的基本流通股數（3.82756億股）作為分母，核算出每股實打實持有的 0.0022043 BTC 現貨清算淨值。當溢價跌破 1（如 0.87）時，代表美股已對現貨出現非理性折價，触發左側高分抄底。
-        * **數據來源**：`yfinance` 美股即時報價（代號：`MSTR`）對齊最新申報財報結構。
+        * **因子定義**：**此指標採用動態「調整後稀釋流通股數(ADSO)」風控標準。** 完美對齊最新官方與專業第三方機構核算的 3.8418 億股結構，對齊精確到每股 220,016 Sats 的現貨清算淨值。當溢價率壓縮到 1.1x~1.2x 區間時，代表美股溢價泡沫已降至健康水位，適合擴大現貨槓桿。
+        * **數據來源**：`yfinance` 美股即時報價（代號：`MSTR`）與動態全面稀釋分母核算。
         
         #### **3. 【衍生品關卡】永續合約多空資金費率 [s6]**
         * **因子定義**：監控加密衍生品市場的多空槓桿平衡狀態。當資金費率為大幅正數時，代表多頭過熱；當**資金費率轉負（Negative Funding Rate）**或極度萎縮時，代表市場多頭完成爆倉清算、散戶瘋狂做空，為經典的現貨右側反彈/左側抄底訊號。
@@ -523,7 +551,7 @@ else:
                 <div class="cute-title"><span>🤡 美股大韭菜有沒有吹泡泡 [s7]</span> {get_cute_badge(s7, 15.0)}</div>
                 <div class="cute-value">
                     <b>特價得分：{s7:.1f} / 15.0 滿分</b><br>
-                    <span style="color:#7f8c8d; font-size:13px;">💡 目前已精確同步最新基本股數（去泡沫硬核溢價：{mstr_premium_rate:.2f} 倍）。數字越低泡沫越小，對我們越安全！</span>
+                    <span style="color:#7f8c8d; font-size:13px;">💡 目前已精確同步最新基本股數（去泡沫硬核全稀釋溢價：{mstr_premium_rate:.2f} 倍）。數字越低泡沫越小，對我們越安全！</span>
                 </div>
             </div>
         """, unsafe_allow_html=True)
