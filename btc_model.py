@@ -1,17 +1,25 @@
+import streamlit as st
+import numpy as np
+import pandas as pd
+import plotly.graph_objects as go
+import yfinance as yf
+from datetime import datetime
+from zoneinfo import ZoneInfo
+from binance.cm_futures import CMFutures
+
 # ==========================================
 # 0. 網頁全域設定
 # ==========================================
-st.set_page_config(page_title="BTC 抄底監控戰情室", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(
+    page_title="BTC 抄底監控戰情室",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 TAIPEI_TZ = ZoneInfo("Asia/Taipei")
 
 # ==========================================
-# 1. 數據抓取與參數初始化 (新增 Session State)
+# 1. 數據抓取模組
 # ==========================================
-# 確保數值在互動時不會消失
-if 'holdings' not in st.session_state: st.session_state.holdings = 846842
-if 'shares' not in st.session_state: st.session_state.shares = 386052000
-if 'cost' not in st.session_state: st.session_state.cost = 75656
-
 @st.cache_data(ttl=5)
 def fetch_binance_ticker():
     try:
@@ -28,10 +36,73 @@ def fetch_binance_ticker():
         return None
     except: return None
 
-# ... (在此處保留您原有的 fetch_funding_rate, fetch_historical_data, fetch_fear_greed, fetch_mstr_premium 函式) ...
+@st.cache_data(ttl=5)
+def fetch_funding_rate():
+    try:
+        cm_client = CMFutures()
+        res = cm_client.premium_index(symbol="BTCUSD_PERP")
+        return float(res[0].get('lastFundingRate', 0.0001)) if isinstance(res, list) else 0.0001
+    except: return 0.0001
+
+@st.cache_data(ttl=30)
+def fetch_historical_data():
+    try:
+        btc = yf.Ticker("BTC-USD")
+        df_d = btc.history(period="100d", interval="1d")
+        daily_closes = df_d['Close'].tolist() if not df_d.empty else []
+        df_w = btc.history(period="max", interval="1wk")
+        if not df_w.empty:
+            df_w = df_w.reset_index()
+            df_w['200WMA'] = df_w['Close'].rolling(window=200).mean()
+        return daily_closes, df_w
+    except: return [], pd.DataFrame()
+
+@st.cache_data(ttl=30)
+def fetch_fear_greed():
+    try:
+        vix = yf.Ticker("^VIX").history(period="1d")
+        vix_price = float(vix['Close'].iloc[-1])
+        return max(10, min(90, int(100 - (vix_price * 2))))
+    except: return 50
+
+@st.cache_data(ttl=60)
+def fetch_mstr_premium():
+    try:
+        mstr = yf.Ticker("MSTR").history(period="1d", interval="1m")
+        return float(mstr['Close'].iloc[-1]) if not mstr.empty else None
+    except: return None
 
 # ==========================================
-# 2. 執行數據抓取與參數核算
+# 2. 參數初始化 (Session State) 與 側邊欄設計
+# ==========================================
+if 'holdings' not in st.session_state: st.session_state.holdings = 846842
+if 'shares' not in st.session_state: st.session_state.shares = 386052000
+if 'cost' not in st.session_state: st.session_state.cost = 75656
+
+with st.sidebar:
+    st.markdown("### 🛠️ 數據手動更新區")
+    st.session_state.holdings = st.number_input("持倉總量 (BTC)", value=st.session_state.holdings, step=1)
+    st.session_state.shares = st.number_input("基本流通股數", value=st.session_state.shares, step=1)
+    st.session_state.cost = st.number_input("歷史總平均成本 (USD)", value=st.session_state.cost, step=1)
+    
+    st.markdown("---")
+    st.markdown("### 🔮 戰情室切換")
+    page = st.radio("請選擇檢視視角：", ["直男量化經理人版", "文元專屬：能不能買包包版"], index=0)
+    st.markdown("---")
+    
+    st.markdown("### 📊 MSTR 當前狀態")
+    st.info(f"🪙 持倉總量: {st.session_state.holdings:,} BTC")
+    st.info(f"📜 基本流通股數: {st.session_state.shares:,} 股")
+    st.info(f"📉 歷史總平均成本: ${st.session_state.cost:,} USD")
+
+# 賦值給計分引擎使用
+MSTR_BTC_HOLDINGS = st.session_state.holdings
+MSTR_SHARES_OUTSTANDING = st.session_state.shares
+MSTR_AVG_COST = st.session_state.cost
+BTC_PER_SHARE = MSTR_BTC_HOLDINGS / MSTR_SHARES_OUTSTANDING
+
+# ==========================================
+# 3. 數據抓取與量化計分邏輯
 # ==========================================
 ticker_data = fetch_binance_ticker()
 funding_rate = fetch_funding_rate()
@@ -39,30 +110,14 @@ daily_closes, df_weekly = fetch_historical_data()
 fng_value = fetch_fear_greed()
 mstr_live_price = fetch_mstr_premium()
 
-# 使用 Session State 的值進行核算
-MSTR_BTC_HOLDINGS = st.session_state.holdings
-MSTR_SHARES_OUTSTANDING = st.session_state.shares
-MSTR_AVG_COST = st.session_state.cost
-BTC_PER_SHARE = MSTR_BTC_HOLDINGS / MSTR_SHARES_OUTSTANDING
-
-# ... (保留原有的 s1 ~ s9 計分邏輯) ...
+# 核心計分 (省略中間繁瑣邏輯，確保變數使用上面手動輸入的數值)
+# [此處插入您原有的 s1-s9 計分邏輯]
+# ... (您的原有計算代碼) ...
 
 # ==========================================
-# 3. 側邊欄切換路由 (加入手動輸入元件)
+# 4. 主頁面顯示邏輯 (直男/文元版)
 # ==========================================
-with st.sidebar:
-    st.markdown("### 🛠️ 參數手動更新")
-    st.session_state.holdings = st.number_input("持倉總量 (BTC)", value=st.session_state.holdings, step=1)
-    st.session_state.shares = st.number_input("基本流通股數", value=st.session_state.shares, step=1)
-    st.session_state.cost = st.number_input("歷史總平均成本 (USD)", value=st.session_state.cost, step=1)
-    st.markdown("---")
-    
-    st.markdown("### 🔮 戰情室切換")
-    page = st.radio("請選擇檢視視角：", ["直男量化經理人版", "文元專屬：能不能買包包版"], index=0)
-    st.markdown("---")
-    st.markdown("### 📊 MSTR 當前狀態")
-    st.info(f"🪙 持倉總量: {st.session_state.holdings:,} BTC")
-    st.info(f"📜 基本流通股數: {st.session_state.shares:,} 股")
+# ... (保留您原有的 if page == "直男量化經理人版" ... else ... 頁面渲染代碼) ...
   
 # ==========================================
 # 4. 分頁 A：直男量化經理人版
