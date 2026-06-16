@@ -3,51 +3,53 @@ import yfinance as yf
 from datetime import datetime
 
 # ==========================================
-# ⚠️ 需手動更新的核心數據 (請根據最新公告調整)
+# 1. 核心參數輸入區 (根據您提供的最新截圖)
 # ==========================================
-st.sidebar.header("手動更新區 (修正版 mNAV)")
+st.sidebar.header("MSTR 企業價值輸入 (手動更新)")
+# 參考您的截圖數據
+ADSO_MILLIONS = st.sidebar.number_input("流通股數 (ADSO in millions)", value=386.052)
+TOTAL_DEBT_M = st.sidebar.number_input("總負債 (Total Debt $M)", value=6714)
+TOTAL_PREF_M = st.sidebar.number_input("特別股 (Preferred Stock $M)", value=15471)
+CASH_RESERVE_M = st.sidebar.number_input("現金儲備 (USD Reserve $M)", value=1100)
 MSTR_BTC_HOLDINGS = st.sidebar.number_input("BTC 總持倉", value=846842)
-MSTR_TOTAL_DILUTED_SHARES = st.sidebar.number_input("完全稀釋股數", value=400000000)
-MSTR_NET_DEBT = st.sidebar.number_input("淨債務 (USD)", value=4500000000)
 
 # ==========================================
-# 1. 自動抓取區
+# 2. 即時數據抓取
 # ==========================================
-@st.cache_data(ttl=60)
 def get_live_data():
-    try:
-        mstr = yf.Ticker("MSTR")
-        mstr_price = float(mstr.history(period="1d")['Close'].iloc[-1])
-        btc = yf.Ticker("BTC-USD")
-        btc_price = float(btc.history(period="1d")['Close'].iloc[-1])
-        return mstr_price, btc_price
-    except:
-        return 0, 0
+    mstr = yf.Ticker("MSTR")
+    mstr_price = float(mstr.history(period="1d")['Close'].iloc[-1])
+    btc = yf.Ticker("BTC-USD")
+    btc_price = float(btc.history(period="1d")['Close'].iloc[-1])
+    return mstr_price, btc_price
 
 mstr_price, btc_price = get_live_data()
 
 # ==========================================
-# 2. 計算引擎 (使用手動輸入的權重)
+# 3. 企業價值 (EV) 計算引擎
 # ==========================================
-# 真實每股清算價值 (去泡沫 mNAV)
-real_nav_per_share = ((MSTR_BTC_HOLDINGS * btc_price) - MSTR_NET_DEBT) / MSTR_TOTAL_DILUTED_SHARES
-nmav_premium = mstr_price / real_nav_per_share if real_nav_per_share > 0 else 0
+# EV = (ADSO * Price) + Pref + Debt - Cash
+market_cap_m = ADSO_MILLIONS * mstr_price
+ev = market_cap_m + TOTAL_PREF_M + TOTAL_DEBT_M - CASH_RESERVE_M
+
+# BTC 持倉市值 (估算)
+btc_value_m = (MSTR_BTC_HOLDINGS * btc_price) / 1_000_000
+
+# 去泡沫真實 mNAV (使用 EV 邏輯)
+# 核心邏輯：EV 與 BTC 持倉市值的比率
+ev_btc_ratio = ev / btc_value_m
 
 # ==========================================
-# 3. 監控儀表板
+# 4. 儀表板呈現
 # ==========================================
-st.title("🛡️ MSTR 去泡沫真實版監控儀表板")
+st.title("🛡️ MSTR 機構級企業價值監控")
 
-col1, col2, col3, col4 = st.columns(4)
+col1, col2, col3 = st.columns(3)
 col1.metric("MSTR 市價", f"${mstr_price:,.2f}")
-col2.metric("BTC 現價", f"${btc_price:,.2f}")
-col3.metric("去泡沫真實 mNAV", f"${real_nav_per_share:,.2f}")
-col4.metric("真實溢價倍數", f"{nmav_premium:.2f}x")
+col2.metric("計算後 EV ($M)", f"${ev:,.0f}")
+col3.metric("EV / BTC 持倉比", f"{ev_btc_ratio:.2f}x")
 
-# 警示邏輯
-if nmav_premium < 1.0:
-    st.error("🚨 進入嚴重折價區 (價值低估)")
-elif nmav_premium > 2.0:
-    st.warning("⚠️ 進入高溢價警報區")
-
-st.info(f"最後更新: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+st.markdown("---")
+st.subheader("💡 指標分析")
+st.write(f"當前市場對 MSTR 的溢價倍數為 **{ev_btc_ratio:.2f}x**。")
+st.write("若此數值 > 2.0x，代表市場對 MSTR 的資產溢價過高；若 < 1.0x，代表資產被低估。")
