@@ -44,20 +44,24 @@ def fetch_binance_ticker():
         return None
     except:
         return None
-
 @st.cache_data(ttl=5)
 def fetch_funding_rate():
-    """💎 修正：改用 UMFutures 抓取 BTCUSDT 永續合約費率"""
+    """使用 UMFutures 獲取最新資金費率，直接返回原始數值"""
     try:
         um_client = UMFutures()
-        # 獲取 BTCUSDT 的 premium_index 以取得即時費率
-        res = um_client.premium_index(symbol="BTCUSDT")
-        if isinstance(res, dict):
-            return float(res.get('lastFundingRate', 0.0001))
-        return 0.0001
-    except:
-        return 0.0001
-
+        # 獲取 BTCUSDT 的資金費率數據
+        res = um_client.funding_rate(symbol="BTCUSDT", limit=1)
+        
+        # 檢查返回的資料是否為列表且有數據
+        if isinstance(res, list) and len(res) > 0:
+            # 直接提取 fundingRate 欄位
+            return float(res[0].get('fundingRate', 0))
+            
+        return 0.0 
+    except Exception as e:
+        # 如果發生錯誤，顯示在介面上讓你確認原因
+        st.sidebar.error(f"費率抓取異常: {e}")
+        return 0.0
 @st.cache_data(ttl=30)
 def fetch_historical_data():
     try:
