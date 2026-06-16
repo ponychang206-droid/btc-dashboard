@@ -121,16 +121,18 @@ s1, s2, s3, s4, s5, s6, s7, s8, s9 = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
 btc_price = 0.0
 price_delta_str = "0.00%"
 ma200_w_current = 0.0
-mstr_premium_rate = 1.20
 
-# 📊 核心配置：採用基本流通股數，進行最保守的現貨去泡沫化核算
-MSTR_BTC_HOLDINGS = 846842          # 🎯 已更新最新總持倉 
-MSTR_SHARES_OUTSTANDING = 386052000 # 🎯 已更新最新基本流通股數 (ADSO)
-MSTR_AVG_COST = 75656               # 🎯 已更新歷史總平均買入成本
-BTC_PER_SHARE = MSTR_BTC_HOLDINGS / MSTR_SHARES_OUTSTANDING  # 自動核算動態每股實打實含幣量
+# 📊 核心配置：精確對齊 2026/06/15 最新公佈數據 (第 113 次報告)
+MSTR_BTC_HOLDINGS = 846842          # 🎯 最新總持倉 (Image 3)
+MSTR_SHARES_OUTSTANDING = 386052000 # 🎯 最新基本流通股數 (ADSO)
+MSTR_AVG_COST = 75656               # 🎯 最新平均買入成本
 
-# 💎 根據圖片更新最新 MSTR 企業價值 (Enterprise Value) 欄位數據
-MSTR_ENTERPRISE_VALUE = 67857 * 1e6  # 圖片標註為 $67,857 M USD
+# 🏢 官方 mNAV 專屬資本結構參數 (2026/06/15 官方數據基準，單位：百萬美元)
+MSTR_DEBT_M = 6754.0                # 🎯 總負債 Debt ($M)
+MSTR_PREF_M = 15475.0               # 🎯 特別股 Pref ($M)
+MSTR_CASH_M = 1100.0                # 🎯 美元現金 USD Reserve ($M)
+
+BTC_PER_SHARE = MSTR_BTC_HOLDINGS / MSTR_SHARES_OUTSTANDING  # 自動核算動態每股實打實含幣量 (~0.0021936 BTC / 219,360 Sats)
 
 if ticker_data is not None:
     btc_price = ticker_data['price']
@@ -163,13 +165,27 @@ if ticker_data is not None:
     # s6: 永續合約多空資金費率 (滿分 15)
     s6 = max(0.0, min(15.0, ((0.0001 - funding_rate) / 0.0004) * 15.0))
     
-    # s7: MSTR 靜態 mNAV 現貨溢價指標 [🛠️ 已依照用戶指定新公式修改：EV / (持倉量 * BTC即時價)] (滿分 15)
-    mstr_btc_total_value = MSTR_BTC_HOLDINGS * btc_price
-    if mstr_btc_total_value > 0:
-        mstr_premium_rate = MSTR_ENTERPRISE_VALUE / mstr_btc_total_value
+    # s7: MSTR 靜態 mNAV 現貨溢價與官方動態 EV/NAV 溢價指標 (滿分 15)
+    if mstr_live_price is not None:
+        # A. 原本「去泡沫現貨溢價」算法 (0.90倍視角)
+        estimated_nav_spot = btc_price * BTC_PER_SHARE
+        mstr_premium_rate = mstr_live_price / estimated_nav_spot if estimated_nav_spot > 0 else 1.20
+        
+        # B. 官方定義 mNAV 算法 (1.21倍視角)
+        # 1. 動態計算當前 MSTR 總市值
+        current_mcap_m = (mstr_live_price * MSTR_SHARES_OUTSTANDING) / 1_000_000
+        # 2. 計算官方企業價值分子：EV = 市值 + 債務 + 特別股 - 現金
+        current_ev_m = current_mcap_m + MSTR_DEBT_M + MSTR_PREF_M - MSTR_CASH_M
+        # 3. 計算分母：比特幣現貨總價值 BTC NAV
+        current_btc_nav_m = (MSTR_BTC_HOLDINGS * btc_price) / 1_000_000
+        # 4. 導出官方 mNAV 倍數
+        official_mnav_rate = current_ev_m / current_btc_nav_m if current_btc_nav_m > 0 else 1.21
+        
+        # 評分權重採用去泡沫現貨溢價作為核心防線
         s7 = max(0.0, min(15.0, ((2.5 - mstr_premium_rate) / 1.5) * 15.0))
     else:
-        mstr_premium_rate = 1.20
+        mstr_premium_rate = 0.90
+        official_mnav_rate = 1.21
         s7 = 13.0
         
     # s8: 200週線大底防線 (滿分 20)
@@ -357,7 +373,7 @@ if page == "直男量化經理人版":
 
         st.markdown(f"""
             <div class="metric-card"><div class="metric-title"><span>【重磅生死線】200週線大底防線 [s8] (權重: 20%)</span> {get_ui_badge(s8, 20.0)}</div><div class="metric-value">{s8:.1f} / 20.0 分 <span style="font-size:12px; color:#848e9c; font-weight:normal; margin-left:10px;">歷史長線終極防禦支撐位</span></div></div>
-            <div class="metric-card"><div class="metric-title"><span>【美股風向球】MSTR 靜態 mNAV 現貨溢價指標 [s7] (權重: 15%)</span> {get_ui_badge(s7, 15.0)}</div><div class="metric-value">{s7:.1f} / 15.0 分 <span style="font-size:12px; color:#848e9c; font-weight:normal; margin-left:10px;">企業價值溢價比率 (EV/BTC總值): {mstr_premium_rate:.2f} 倍 (含幣量: {BTC_PER_SHARE*1e8:,.0f} Sats/股)</span></div></div>
+            <div class="metric-card"><div class="metric-title"><span>【美股風向球】MSTR 靜態 mNAV 現貨溢價指標 [s7] (權重: 15%)</span> {get_ui_badge(s7, 15.0)}</div><div class="metric-value">{s7:.1f} / 15.0 分 <span style="font-size:12px; color:#848e9c; font-weight:normal; margin-left:10px;">去泡沫現貨溢價: {mstr_premium_rate:.2f} 倍 | 官方 mNAV: {official_mnav_rate:.2f} 倍</span></div></div>
             <div class="metric-card"><div class="metric-title"><span>【衍生品關卡】永續合約多空資金費率 [s6] (權重: 15%)</span> {get_ui_badge(s6, 15.0)}</div><div class="metric-value">{s6:.1f} / 15.0 分 <span style="font-size:12px; color:#848e9c; font-weight:normal; margin-left:10px;">當前即時資金費率: {funding_rate*100:+.4f}%</span></div></div>
             <div class="metric-card"><div class="metric-title"><span>【韭菜探針】市場散戶恐懼情緒 [s5] (權重: 15%)</span> {get_ui_badge(s5, 15.0)}</div><div class="metric-value">{s5:.1f} / 15.0 分 <span style="font-size:12px; color:#848e9c; font-weight:normal; margin-left:10px;">VIX反向推算散戶恐懼讀數: {fng_value}</span></div></div>
             <div class="metric-card"><div class="metric-title"><span>【成本拉力】大盤生命線偏離度 [s2] (權重: 10%)</span> {get_ui_badge(s2, 10.0)}</div><div class="metric-value">{s2:.1f} / 10.0 分 <span style="font-size:12px; color:#848e9c; font-weight:normal; margin-left:10px;">現價離 60 日均線(MA60)負乖離比例</span></div></div>
@@ -368,7 +384,7 @@ if page == "直男量化經理人版":
         """, unsafe_allow_html=True)
 
     # =====================================================================
-    # 💎 MSTR 全面稀釋清算價值與合理股價壓力測試模擬
+    # 💎 翻修版：MSTR 全面稀釋清算價值與合理股價壓力測試模擬
     # ==========================================
     st.markdown("---")
     st.subheader("📊 MSTR 全面稀釋清算價值與合理股價壓力測試模擬")
@@ -384,9 +400,10 @@ if page == "直男量化經理人版":
     
     rows = []
     for p, name in zip(sim_btc_prices, sim_scenarios):
-        # 扣除淨債務估算完全稀釋後的每股實質 NAV (清算價值)
+        # 扣除淨債務與特別股估算完全稀釋後的每股實質 NAV (清算價值)
         sim_total_btc_value = MSTR_BTC_HOLDINGS * p
-        sim_nav_total = sim_total_btc_value - MSTR_NET_DEBT if 'MSTR_NET_DEBT' in locals() else (sim_total_btc_value - 4500000000)
+        # 清算價值 = 比特幣價值 - 債務 - 特別股 + 現金
+        sim_nav_total = sim_total_btc_value - (MSTR_DEBT_M * 1_000_000) - (MSTR_PREF_M * 1_000_000) + (MSTR_CASH_M * 1_000_000)
         sim_nav_per_share = sim_nav_total / DILUTED_SHARES
         
         # 計算 1.2 倍合理防線與 1.8 倍牛市常態泡沫線
@@ -406,14 +423,14 @@ if page == "直男量化經理人版":
     # 🛠️ 關鍵優化：捨棄會跟底圖顏色打架的 HTML 表格，改用 Streamlit 原生高對比度 Dataframe 顯示
     st.dataframe(df_stress, use_container_width=True, hide_index=True)
 
-    # 💡 高強度可讀性的白話操盤指南
+    # 💡 增加高強度可讀性的白話操盤指南（已修正為完全稀釋邏輯，並強制文字渲染為高亮純白色）
     st.markdown("""
         <div style="background-color: #181a20; border: 1px solid #2b3139; border-radius: 8px; padding: 20px; margin: 15px 0;">
             <p style="color: #ffffff; font-size: 16px; font-weight: bold; margin-bottom: 12px;">
                 💡 操盤風控指南 —— 怎麼看這份測試數據？
             </p>
             <p style="color: #ffffff; font-size: 14px; line-height: 1.6; margin-bottom: 14px;">
-                本數據採用最嚴格的<b>「完全稀釋（Fully Diluted）」模型</b>。核心邏輯：將未來所有可轉債視為全部轉股（分母極大化至 4 億股），因此反推估算出的「每股合理價」會被稀釋壓低，這能為策略構築出最保守、安全的防守邊界。
+                本數據採用最嚴格的<b>「完全稀釋（Fully Diluted）」模型</b>。核心邏輯：將未來所有可轉債與特別股權益視為全部轉股（分母極大化至 4 億股），因此反推估算出的「每股合理價」會被稀釋壓低，這能為策略構築出最保守、安全的防守邊界。
             </p>
             <ul style="color: #ffffff; font-size: 14px; line-height: 1.7; padding-left: 20px;">
                 <li style="margin-bottom: 10px;">
@@ -423,7 +440,7 @@ if page == "直男量化經理人版":
                     <b>2. 判斷「天花板與泡沫警戒」（看 1.8 倍溢價欄位）</b>：當市場狂熱，華爾街給到 1.8 倍高溢價。在 BTC 10 萬美元時，MSTR 觸及 <span style="color: #f3ba2f; font-weight: bold;">$383</span> 附近即代表即使在完全稀釋的預期下，也已把未來漲幅預支完畢。此時若股價繼續飆升，意味著真實泡沫率嚴重過高，切勿盲目追多，需防範多頭踩踏的暴跌修正。
                 </li>
                 <li style="margin-bottom: 5px;">
-                    <b>3. 稀釋效應的「鈍化現象」</b>：市場最擔心的「瘋狂發債、股本膨脹」，在 MSTR 模式下會被幣價上漲給鈍化。數據顯示，即便可轉債全數轉股（分母變大），只要 BTC 幣價能一路震盪上行（如到 15 萬美元），完全稀釋下的 1.2 倍地板價仍會被暴力拉升到 <span style="color: #f3ba2f; font-weight: bold;">$319</span>。長期來看，<b>資產增速大於股本稀釋速度</b>，上行空間就不會被鎖死。
+                    <b>3. 稀釋效應的「鈍化現象」</b>：市場最擔心的「瘋狂發債、股本膨脹」，在 MSTR 模式下會被幣價上漲給鈍化。數據顯示，即便可轉債全數轉股（分母變大），手頭的比特幣總量只要能隨著幣價震盪上行（如到 15 萬美元），完全稀釋下的 1.2 倍地板價仍會被暴力拉升到 <span style="color: #f3ba2f; font-weight: bold;">$319</span>。長期來看，<b>資產增速大於股本稀釋速度</b>，上行空間就不會被鎖死。
                 </li>
             </ul>
         </div>
@@ -442,15 +459,15 @@ if page == "直男量化經理人版":
         * **數據來源**：`yfinance` 跨市場週線歷史資料庫（代號：`BTC-USD`）。
         
         #### **2. 【美股風向球】MSTR 靜態 mNAV 現貨溢價指標 [s7]**
-        * **因子定義**：**此指標採用企業價值(EV)相對於實際持有比特幣市值之去泡沫標準。** 完美對齊最新官方財報控制台結構。當比率壓縮到 1.1x~1.2x 區間時，代表美股資產溢價已降至健康水位，適合擴大現貨槓桿。
-        * **數據來源**：`yfinance` 美股與加密市場即時報價交叉核算。
+        * **因子定義**：**此指標採用雙重風控標準。** 完美對齊 2026/06/15 最新官方公佈基本流通股數。包含兩種主流評估視角：1. 去泡沫現貨溢價（當前 0.90 倍）；2. Michael Saylor 官方企業價值 mNAV 溢價（當前 1.21 倍），全方位掌握 MSTR 的真實溢價水平。
+        * **數據來源**：`yfinance` 美股即時報報價（代號：`MSTR`）與微策略官方 8-K 披露文件核算。
         
         #### **3. 【衍生品關卡】永續合約多空資金費率 [s6]**
         * **因子定義**：監控加密衍生品市場的多空槓桿平衡狀態。當資金費率為大幅正數時，代表多頭過熱；當**資金費率轉負（Negative Funding Rate）**或極度萎縮時，代表市場多頭完成爆倉清算、散戶瘋狂做空，為經典的現貨右側反彈/左側抄底訊號。
         * **數據來源**：幣安期貨 SDK 官方即時合約串流（代號：`Binance CM-Futures API` 的 `BTCUSD_PERP` 數據）。
         
         #### **4. 【韭菜探針】市場散戶恐懼情緒 [s5]**
-        * **因子定義**：傳統加密市場 Fear & Greed 請求極易因海外節點遭到 Cloudflare 封鎖而卡死。本看板創新採用**美股 CBOE 波動率指數 (VIX)** 進行反向映射與平滑去噪，精準捕捉跨市場宏觀資金 की 非理性恐慌程度。VIX 越高，映射出的恐懼情緒越強，抄底得分越高。
+        * **因子定義**：傳統加密市場 Fear & Greed 請求極易因海外節點遭到 Cloudflare 封鎖而卡死。本看板創新採用**美股 CBOE 波動率指數 (VIX)** 進行反向映射與平滑去噪，精準捕捉跨市場宏觀資金的非理性恐慌程度。VIX 越高，映射出的恐懼情緒越強，抄底得分越高。
         * **數據來源**：`yfinance` 芝加哥期權交易所波动率指數（代號：`^VIX`）。
         
         #### **5. 【成本拉力】大盤生命線偏離度 [s2]**
@@ -593,7 +610,7 @@ else:
                 <div class="cute-title"><span>🤡 美股大韭菜有沒有吹泡泡 [s7]</span> {get_cute_badge(s7, 15.0)}</div>
                 <div class="cute-value">
                     <b>特價得分：{s7:.1f} / 15.0 滿分</b><br>
-                    <span style="color:#7f8c8d; font-size:13px;">💡 目前已改採官方最新控制台公式（EV / BTC總價值 = {mstr_premium_rate:.2f} 倍）。數字越低泡沫越小，對我們越安全！</span>
+                    <span style="color:#7f8c8d; font-size:13px;">💡 目前已精確同步最新基本股數核算（去泡沫硬核現貨溢價：{mstr_premium_rate:.2f} 倍）。數字越低泡沫越小，對我們越安全！</span>
                 </div>
             </div>
         """, unsafe_allow_html=True)
