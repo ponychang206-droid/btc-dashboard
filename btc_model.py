@@ -4,94 +4,192 @@ import pandas as pd
 import plotly.graph_objects as go
 import yfinance as yf
 from datetime import datetime
-from zoneinfo import ZoneInfo 
+from zoneinfo import ZoneInfo  # 💎 引入標準時區庫，精確鎖定台北時間
+from binance.cm_futures import CMFutures  # 替代原有的 fapi 請求
 
 # ==========================================
-# 0. 網頁全域設定
+# 0. 網頁全域設定 (必須是第一個執行的 Streamlit 語法！)
 # ==========================================
 st.set_page_config(
     page_title="BTC 抄底監控戰情室",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="expanded"  # 強制初始展開側邊欄
 )
 
+# 設定台北時區常數
 TAIPEI_TZ = ZoneInfo("Asia/Taipei")
 
 # ==========================================
-# 1. 數據抓取模組
+# 1. 數據抓取模組 (完全移除 requests，改用極穩定的 SDK 與 yfinance)
 # ==========================================
-@st.cache_data(ttl=60)
-def fetch_data():
-    """統一集中抓取數據，解決變數未定義的 NameError"""
+@st.cache_data(ttl=5)
+def fetch_binance_ticker():
+    """使用 yfinance 抓取 BTC 即時與 24h 行情，避免雲端 IP 被幣安封鎖"""
     try:
         btc = yf.Ticker("BTC-USD")
-        # 獲取價格與指標數據
-        hist = btc.history(period="300d", interval="1d")
-        last_price = float(hist['Close'].iloc[-1])
-        prev_close = float(hist['Close'].iloc[-2])
-        delta_pct = ((last_price - prev_close) / prev_close) * 100
-        
-        # 計算 MA200
-        ma200 = float(hist['Close'].iloc[-200:].mean())
-        
-        # 獲取 VIX 與 MSTR
-        vix = yf.Ticker("^VIX").history(period="1d")
-        vix_val = float(vix['Close'].iloc[-1]) if not vix.empty else 20
-        
-        mstr = yf.Ticker("MSTR").history(period="1d")
-        mstr_price = float(mstr['Close'].iloc[-1]) if not mstr.empty else 130
-        
-        return {
-            'price': last_price,
-            'delta': delta_pct,
-            'ma200': ma200,
-            'vix': vix_val,
-            'mstr': mstr_price,
-            'closes': hist['Close'].tolist()
-        }
+        df = btc.history(period="2d", interval="5m")
+        if not df.empty:
+            last_price = float(df['Close'].iloc[-1])
+            df_24h = btc.history(period="1d", interval="1m")
+            high_price = float(df_24h['High'].max()) if not df_24h.empty else last_price
+            low_price = float(df_24h['Low'].min()) if not df_24h.empty else last_price
+            
+            prev_close = float(df['Close'].iloc[0])
+            delta_pct = ((last_price - prev_close) / prev_close) * 100
+            
+            return {
+                'price': last_price,
+                'high': high_price,
+                'low': low_price,
+                'delta': delta_pct
+            }
+        return None
     except:
         return None
 
-# 初始化數據
-data = fetch_data()
-if data is None:
-    st.error("數據獲取失敗，請檢查網路連接。")
-    st.stop()
+@st.cache_data(ttl=5)
+def fetch_funding_rate():
+    """使用官方免驗證的 binance-connector SDK 抓取資金費率"""
+    try:
+        cm_client = CMFutures()
+        res = cm_client.premium_index(symbol="BTCUSD_PERP")
+        if isinstance(res, list) and len(res) > 0:
+            return float(res[0].get('lastFundingRate', 0.0001))
+        elif isinstance(res, dict):
+            return float(res.get('lastFundingRate', 0.0001))
+        return 0.0001
+    except:
+        return 0.0001
+
+@st.cache_data(ttl=30)
+def fetch_historical_data():
+    """改用 yfinance 抓取日線與週線數據，完美避開 Klines 限制"""
+    try:
+        btc = yf.Ticker("BTC-USD")
+        df_d = btc.history(period="100d", interval="1d")
+        daily_closes = df_d['Close'].tolist() if not df_d.empty else []
+        
+        df_w = btc.history(period="max", interval="1wk")
+        if not df_w.empty:
+            df_w = df_w.reset_index()
+            df_w['200WMA'] = df_w['Close'].rolling(window=200).mean()
+            df_w = df_w.rename(columns={'Date': 'Date'})
+        else:
+            df_w = pd.DataFrame()
+            
+        return daily_closes, df_w
+    except:
+        return [], pd.DataFrame()
+
+@st.cache_data(ttl=30)
+def fetch_fear_greed():
+    """情緒指數改用隱含波動率替代，確保雲端環境不卡死"""
+    try:
+        vix = yf.Ticker("^VIX")
+        vix_df = vix.history(period="1d")
+        if not vix_df.empty:
+            vix_price = float(vix_df['Close'].iloc[-1])
+            fng_mapped = max(10, min(90, int(100 - (vix_price * 2))))
+            return fng_mapped
+        return 50
+    except:
+        return 50
+
+@st.cache_data(ttl=60)
+def fetch_mstr_premium():
+    """抓取 MSTR 最新美股即時價"""
+    try:
+        mstr = yf.Ticker("MSTR")
+        df_mstr = mstr.history(period="1d", interval="1m")
+        if not df_mstr.empty:
+            return float(df_mstr['Close'].iloc[-1])
+        return None
+    except:
+        return None
 
 # ==========================================
-# 2. 量化加權計分引擎
+# 2. 執行數據抓取與量化加權計分引擎
 # ==========================================
-btc_price = data['price']
-price_delta = data['delta']
-price_delta_str = f"{price_delta:+.2f}%"
+ticker_data = fetch_binance_ticker()
+funding_rate = fetch_funding_rate()
+daily_closes, df_weekly = fetch_historical_data()
+fng_value = fetch_fear_greed()
+mstr_live_price = fetch_mstr_premium()
 
-# 權重計算
-# s6: 改為年線乖離率 (取代已失效的資金費率)
-bias_ma200 = (btc_price - data['ma200']) / data['ma200']
-s6 = max(0.0, min(15.0, ((0.10 - bias_ma200) / 0.30) * 15.0))
+total_score = 0.0
+s1, s2, s3, s4, s5, s6, s7, s8, s9 = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+btc_price = 0.0
+price_delta_str = "0.00%"
+ma200_w_current = 0.0
+mstr_premium_rate = 1.20
 
-# 其他計分 (省略部分冗餘代碼，確保邏輯流暢)
-total_score = 50.0 + s6 # 範例計分
+# 📊 核心配置：採用基本流通股數，進行最保守的現貨去泡沫化核算
+MSTR_BTC_HOLDINGS = 846842          # 🎯 已更新最新總持倉 
+MSTR_SHARES_OUTSTANDING = 386052000 # 🎯 已更新最新基本流通股數 (ADSO)
+MSTR_AVG_COST = 75656               # 🎯 已更新歷史總平均買入成本
+BTC_PER_SHARE = MSTR_BTC_HOLDINGS / MSTR_SHARES_OUTSTANDING  # 自動核算動態每股實打實含幣量
 
-# ==========================================
-# 3. 介面渲染
-# ==========================================
-# 修正 delta_color 錯誤：確保在渲染前變數已定義
-delta_color = "#0ecb81" if price_delta >= 0 else "#f6465d"
+if ticker_data is not None:
+    btc_price = ticker_data['price']
+    price_delta_str = f"{ticker_data['delta']:+.2f}%"
 
-st.markdown(f"""
-    <div style="font-size: 24px; color: #eaecef;">
-        BTC 即時價格: <span style="color: {delta_color};">${btc_price:,.2f}</span> ({price_delta_str})
-    </div>
-""", unsafe_allow_html=True)
+    # s1: 日內微觀掛單最優便宜度 (滿分 5)
+    p_range = ticker_data['high'] - ticker_data['low']
+    s1 = (((ticker_data['high'] - btc_price) / p_range) * 5.0) if p_range > 0 else 2.5
+    
+    # s2: 大盤生命線 MA60 負乖離 (滿分 10)
+    if len(daily_closes) >= 60:
+        bias = (btc_price - np.mean(daily_closes[-60:])) / np.mean(daily_closes[-60:])
+        s2 = max(0.0, min(10.0, (0.0 - bias) / 0.20 * 10.0))
+    else: 
+        s2 = 5.0
+        
+    # s3: 14天散戶套牢洗盤度 (滿分 5)
+    if len(daily_closes) >= 14:
+        r14 = (btc_price - daily_closes[-14]) / daily_closes[-14]
+        s3 = max(0.0, min(5.0, (0.0 - r14) / 0.15 * 5.0))
+    else: 
+        s3 = 2.5
+        
+    # s4: 今日盤中瀑布下殺強度 (滿分 5)
+    s4 = max(0.0, min(5.0, (abs(ticker_data['delta']) / 5.0) * 5.0)) if ticker_data['delta'] < 0 else 0.0
+    
+    # s5: 散戶恐懼貪婪情緒指數 (滿分 15)
+    s5 = max(0.0, min(15.0, ((40.0 - float(fng_value)) / 30.0) * 15.0))
+    
+    # s6: 永續合約多空資金費率 (滿分 15)
+    s6 = max(0.0, min(15.0, ((0.0001 - funding_rate) / 0.0004) * 15.0))
+    
+    # s7: MSTR 靜態 mNAV 現貨溢價指標 [回歸基本流通股數核算] (滿分 15)
+    if mstr_live_price is not None:
+        estimated_nav = (btc_price * BTC_PER_SHARE) 
+        mstr_premium_rate = mstr_live_price / estimated_nav if estimated_nav > 0 else 1.20
+        s7 = max(0.0, min(15.0, ((2.5 - mstr_premium_rate) / 1.5) * 15.0))
+    else:
+        mstr_premium_rate = 1.20
+        s7 = 13.0
+        
+    # s8: 200週線大底防線 (滿分 20)
+    if not df_weekly.empty and len(df_weekly) >= 200:
+        ma200_w_current = float(df_weekly.iloc[-1]['200WMA'])
+        dist_200w = (btc_price - ma200_w_current) / ma200_w_current
+        s8 = max(0.0, min(20.0, ((0.05 - dist_200w) / 0.10) * 20.0))
+    else:
+        ma200_w_current = btc_price * 0.7
+        s8 = 10.0
+        
+    # s9: 四年減半週期時空定位 (滿分 10) ── 🛠️ 已同步為台北時間計算
+    last_halving = datetime(2024, 4, 20, tzinfo=TAIPEI_TZ)
+    now_taipei = datetime.now(TAIPEI_TZ)
+    days_since_halving = (now_taipei - last_halving).days
+    cycle_progress = (days_since_halving % 1460) / 1460 
+    if 500 <= days_since_halving % 1460 <= 800:
+        s9 = max(0.0, min(5.0, (1.0 - cycle_progress) * 10.0))
+    else:
+        s9 = max(5.0, min(10.0, cycle_progress * 10.0))
 
-# 顯示表格前確保資料完整
-st.subheader("指標定義與風險判讀")
-# 使用 st.dataframe 代替 st.table 避免渲染錯誤
-st.dataframe(pd.DataFrame({
-    "因子": ["年線乖離率", "情緒指數", "MSTR溢價"],
-    "得分": [f"{s6:.1f}", "N/A", "N/A"]
-}), use_container_width=True)
+    total_score = s1 + s2 + s3 + s4 + s5 + s6 + s7 + s8 + s9
+
 # ==========================================
 # 3. 側邊欄切換路由
 # ==========================================
