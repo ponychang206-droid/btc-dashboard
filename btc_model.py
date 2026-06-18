@@ -19,6 +19,21 @@ st.set_page_config(
 TAIPEI_TZ = ZoneInfo("Asia/Taipei")
 
 # ==========================================
+# 【新增】Session State 初始化：只在第一次執行時設定預設值
+# 之後使用者修改後，這些值會被保留，直到下次手動更改
+# ==========================================
+if "MSTR_BTC_HOLDINGS" not in st.session_state:
+    st.session_state["MSTR_BTC_HOLDINGS"] = 846842
+if "MSTR_SHARES_OUTSTANDING" not in st.session_state:
+    st.session_state["MSTR_SHARES_OUTSTANDING"] = 386052000
+if "MSTR_AVG_COST" not in st.session_state:
+    st.session_state["MSTR_AVG_COST"] = 75656
+if "MSTR_NET_DEBT" not in st.session_state:
+    st.session_state["MSTR_NET_DEBT"] = 4500000000
+if "DILUTED_SHARES" not in st.session_state:
+    st.session_state["DILUTED_SHARES"] = 400000000
+
+# ==========================================
 # 1. 數據抓取模組
 # ==========================================
 @st.cache_data(ttl=5)
@@ -88,11 +103,39 @@ with st.sidebar:
     st.markdown("---")
     
     st.markdown("### ⚙️ MSTR 財務模型參數設定")
-    MSTR_BTC_HOLDINGS = st.number_input("總持倉量 (BTC)", value=846842, step=100)
-    MSTR_SHARES_OUTSTANDING = st.number_input("基本流通股數", value=386052000, step=1000000)
-    MSTR_AVG_COST = st.number_input("歷史平均成本 ($)", value=75656, step=100)
-    MSTR_NET_DEBT = st.number_input("淨負債金額 ($)", value=4500000000, step=100000000)
-    DILUTED_SHARES = st.number_input("完全稀釋股數", value=400000000, step=1000000)
+
+    # 【修改】所有 number_input 改用 key 綁定 session_state
+    # 使用者修改後數值會自動寫回 session_state 並永久保留
+    MSTR_BTC_HOLDINGS = st.number_input(
+        "總持倉量 (BTC)",
+        value=st.session_state["MSTR_BTC_HOLDINGS"],
+        step=100,
+        key="MSTR_BTC_HOLDINGS"
+    )
+    MSTR_SHARES_OUTSTANDING = st.number_input(
+        "基本流通股數",
+        value=st.session_state["MSTR_SHARES_OUTSTANDING"],
+        step=1000000,
+        key="MSTR_SHARES_OUTSTANDING"
+    )
+    MSTR_AVG_COST = st.number_input(
+        "歷史平均成本 ($)",
+        value=st.session_state["MSTR_AVG_COST"],
+        step=100,
+        key="MSTR_AVG_COST"
+    )
+    MSTR_NET_DEBT = st.number_input(
+        "淨負債金額 ($)",
+        value=st.session_state["MSTR_NET_DEBT"],
+        step=100000000,
+        key="MSTR_NET_DEBT"
+    )
+    DILUTED_SHARES = st.number_input(
+        "完全稀釋股數",
+        value=st.session_state["DILUTED_SHARES"],
+        step=1000000,
+        key="DILUTED_SHARES"
+    )
     
     st.markdown("---")
     
@@ -302,8 +345,8 @@ if page == "直男量化經理人版":
     st.markdown(f"基於最新 {MSTR_BTC_HOLDINGS:,} BTC 持倉，**模擬當未來債主全部換成股票（全面稀釋總股數膨脹至 4 億股）**時，在不同 BTC 幣價情境下 MSTR 的股價合理風控區間：")
     
     # 採用完全稀釋潛在分母進行極端壓力測試
-    DILUTED_SHARES = 400000000 
-    DILUTED_BTC_PER_SHARE = MSTR_BTC_HOLDINGS / DILUTED_SHARES
+    DILUTED_SHARES_SIM = 400000000 
+    DILUTED_BTC_PER_SHARE = MSTR_BTC_HOLDINGS / DILUTED_SHARES_SIM
 
     # 建立固定的模擬幣價情境 (7萬 / 10萬 / 15萬)
     sim_btc_prices = [70000, 100000, 150000]
@@ -311,12 +354,10 @@ if page == "直男量化經理人版":
     
     rows = []
     for p, name in zip(sim_btc_prices, sim_scenarios):
-        # 扣除淨債務估算完全稀釋後的每股實質 NAV (清算價值)
         sim_total_btc_value = MSTR_BTC_HOLDINGS * p
-        sim_nav_total = sim_total_btc_value - MSTR_NET_DEBT if 'MSTR_NET_DEBT' in locals() else (sim_total_btc_value - 4500000000)
-        sim_nav_per_share = sim_nav_total / DILUTED_SHARES
+        sim_nav_total = sim_total_btc_value - MSTR_NET_DEBT
+        sim_nav_per_share = sim_nav_total / DILUTED_SHARES_SIM
         
-        # 計算 1.2 倍合理防線與 1.8 倍牛市常態泡沫線
         floor_price = sim_nav_per_share * 1.2
         ceiling_price = sim_nav_per_share * 1.8
         
@@ -329,11 +370,8 @@ if page == "直男量化經理人版":
         })
         
     df_stress = pd.DataFrame(rows)
-    
-    # 🛠️ 關鍵優化：捨棄會跟底圖顏色打架的 HTML 表格，改用 Streamlit 原生高對比度 Dataframe 顯示
     st.dataframe(df_stress, use_container_width=True, hide_index=True)
 
-    # 💡 增加高強度可讀性的白話操盤指南（已修正為完全稀釋邏輯，並強制文字渲染為高亮純白色）
     st.markdown("""
         <div style="background-color: #181a20; border: 1px solid #2b3139; border-radius: 8px; padding: 20px; margin: 15px 0;">
             <p style="color: #ffffff; font-size: 16px; font-weight: bold; margin-bottom: 12px;">
