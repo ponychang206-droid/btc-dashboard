@@ -20,20 +20,27 @@ TAIPEI_TZ = ZoneInfo("Asia/Taipei")
 
 # ==========================================
 # Session State 初始化
-# 只在第一次執行時設定預設值，之後永久保留使用者修改的數值
+# 關鍵：用獨立的 _val key 儲存數值，與 widget key 完全分開
 # ==========================================
 DEFAULTS = {
-    "MSTR_BTC_HOLDINGS":     846842,    # BTC 總持倉量
-    "MSTR_AVG_COST":         75656,     # 歷史平均買入成本 ($/BTC)
-    "MSTR_BASIC_SHARES":     356320000, # 基本流通股數 (Basic Shares Outstanding)
-    "MSTR_TOTAL_DEBT_M":     6714,      # 總債務 (百萬美元)
-    "MSTR_TOTAL_PREF_M":     15475,     # 優先股總額 (百萬美元)
-    "MSTR_CASH_RESERVE_M":   1100,      # 美元現金儲備 (百萬美元)
-    "MSTR_ADSO":             386052000, # 完全稀釋股數 (Assumed Diluted Shares Outstanding)
+    "MSTR_BTC_HOLDINGS":   846842,
+    "MSTR_AVG_COST":       75656,
+    "MSTR_BASIC_SHARES":   356320000,
+    "MSTR_TOTAL_DEBT_M":   6714,
+    "MSTR_TOTAL_PREF_M":   15475,
+    "MSTR_CASH_RESERVE_M": 1100,
+    "MSTR_ADSO":           386052000,
 }
 for k, v in DEFAULTS.items():
-    if k not in st.session_state:
-        st.session_state[k] = v
+    # 用 _val 後綴儲存實際數值，與 widget key 分開，避免互相覆蓋
+    if f"{k}_val" not in st.session_state:
+        st.session_state[f"{k}_val"] = v
+
+def save_params():
+    """把 widget 的當前值存回 _val，讓下次刷新時能讀到"""
+    for k in DEFAULTS.keys():
+        if k in st.session_state:
+            st.session_state[f"{k}_val"] = st.session_state[k]
 
 # ==========================================
 # 1. 數據抓取模組
@@ -57,18 +64,12 @@ def fetch_btc_ticker():
 
 @st.cache_data(ttl=30)
 def fetch_funding_rate():
-    """
-    改用 Binance USDT-M Futures 公開 REST API
-    BTCUSDT 永續合約才是市場最主流的流動性指標
-    endpoint: https://fapi.binance.com/fapi/v1/premiumIndex?symbol=BTCUSDT
-    """
     try:
         url = "https://fapi.binance.com/fapi/v1/premiumIndex?symbol=BTCUSDT"
         resp = requests.get(url, timeout=5)
         data = resp.json()
         return float(data.get("lastFundingRate", 0.0001))
     except:
-        # 備援：嘗試 Binance 幣本位合約
         try:
             url2 = "https://dapi.binance.com/dapi/v1/premiumIndex?symbol=BTCUSD_PERP"
             resp2 = requests.get(url2, timeout=5)
@@ -81,20 +82,12 @@ def fetch_funding_rate():
 
 @st.cache_data(ttl=300)
 def fetch_fear_greed():
-    """
-    改用 Alternative.me 免費公開 API
-    真正的加密市場恐懼貪婪指數，無需 API Key，不被 Cloudflare 封鎖
-    endpoint: https://api.alternative.me/fng/?limit=1
-    回傳 0 (極度恐懼) ~ 100 (極度貪婪)
-    """
     try:
         url = "https://api.alternative.me/fng/?limit=1"
         resp = requests.get(url, timeout=8)
         data = resp.json()
-        value = int(data["data"][0]["value"])
-        return value
+        return int(data["data"][0]["value"])
     except:
-        # 備援：用 VIX 反向推算
         try:
             vix = yf.Ticker("^VIX")
             vix_df = vix.history(period="1d")
@@ -138,64 +131,76 @@ with st.sidebar:
     page = st.radio("請選擇檢視視角：", ["直男量化經理人版", "文元專屬：能不能買包包版"], index=0)
     st.markdown("---")
 
-    # ── 基本持倉參數 ──────────────────────────────────────
     st.markdown("### 📦 MSTR 基本持倉參數")
+
+    # ── 關鍵修正：value 讀 _val，key 用原名，on_change 即時存回 _val ──
     MSTR_BTC_HOLDINGS = st.number_input(
         "BTC 總持倉量",
-        value=st.session_state["MSTR_BTC_HOLDINGS"], step=100,
-        key="MSTR_BTC_HOLDINGS"
+        value=st.session_state["MSTR_BTC_HOLDINGS_val"],
+        step=100,
+        key="MSTR_BTC_HOLDINGS",
+        on_change=save_params
     )
     MSTR_AVG_COST = st.number_input(
         "歷史平均買入成本 ($ / BTC)",
-        value=st.session_state["MSTR_AVG_COST"], step=100,
-        key="MSTR_AVG_COST"
+        value=st.session_state["MSTR_AVG_COST_val"],
+        step=100,
+        key="MSTR_AVG_COST",
+        on_change=save_params
     )
 
     st.markdown("---")
-
-    # ── 官方 mNAV 參數 ────────────────────────────────────
     st.markdown("### 📊 官方 mNAV 參數")
     st.caption("公式：(基本市值 + 總債務 + 優先股 − 現金) ÷ BTC持倉市值")
+
     MSTR_BASIC_SHARES = st.number_input(
         "基本流通股數 (Basic Shares Outstanding)",
-        value=st.session_state["MSTR_BASIC_SHARES"], step=1000000,
-        key="MSTR_BASIC_SHARES"
+        value=st.session_state["MSTR_BASIC_SHARES_val"],
+        step=1000000,
+        key="MSTR_BASIC_SHARES",
+        on_change=save_params
     )
     MSTR_TOTAL_DEBT_M = st.number_input(
         "總債務 Total Debt（百萬美元）",
-        value=st.session_state["MSTR_TOTAL_DEBT_M"], step=100,
-        key="MSTR_TOTAL_DEBT_M"
+        value=st.session_state["MSTR_TOTAL_DEBT_M_val"],
+        step=100,
+        key="MSTR_TOTAL_DEBT_M",
+        on_change=save_params
     )
     MSTR_TOTAL_PREF_M = st.number_input(
         "優先股總額 Total Pref（百萬美元）",
-        value=st.session_state["MSTR_TOTAL_PREF_M"], step=100,
-        key="MSTR_TOTAL_PREF_M"
+        value=st.session_state["MSTR_TOTAL_PREF_M_val"],
+        step=100,
+        key="MSTR_TOTAL_PREF_M",
+        on_change=save_params
     )
     MSTR_CASH_RESERVE_M = st.number_input(
         "美元現金儲備 USD Cash（百萬美元）",
-        value=st.session_state["MSTR_CASH_RESERVE_M"], step=100,
-        key="MSTR_CASH_RESERVE_M"
+        value=st.session_state["MSTR_CASH_RESERVE_M_val"],
+        step=100,
+        key="MSTR_CASH_RESERVE_M",
+        on_change=save_params
     )
 
     st.markdown("---")
-
-    # ── CEBE mNAV 額外參數 ────────────────────────────────
     st.markdown("### 🔬 CEBE mNAV 參數")
     st.caption("公式：股價 ÷ [(BTC市值 − 優先股 − 總債務) ÷ 完全稀釋股數]")
+
     MSTR_ADSO = st.number_input(
         "完全稀釋股數 ADSO",
-        value=st.session_state["MSTR_ADSO"], step=1000000,
-        key="MSTR_ADSO"
+        value=st.session_state["MSTR_ADSO_val"],
+        step=1000000,
+        key="MSTR_ADSO",
+        on_change=save_params
     )
 
     st.markdown("---")
 
-    # ── 即時數據抓取 ──────────────────────────────────────
+    # ── 即時數據 ──────────────────────────────────────────
     ticker_data = fetch_btc_ticker()
     btc_price   = ticker_data['price'] if ticker_data else 0
     mstr_price  = fetch_mstr_price()
 
-    # BTC 持倉損益
     if btc_price > 0:
         current_pnl_usd = (btc_price - MSTR_AVG_COST) * MSTR_BTC_HOLDINGS
         pnl_billion     = current_pnl_usd / 1e9
@@ -205,21 +210,18 @@ with st.sidebar:
             unsafe_allow_html=True
         )
 
-    # ── 即時 mNAV 計算與顯示 ──────────────────────────────
+    # ── 即時 mNAV 計算 ────────────────────────────────────
     if btc_price > 0 and mstr_price:
         btc_reserve_m  = (btc_price * MSTR_BTC_HOLDINGS) / 1e6
         basic_mktcap_m = (mstr_price * MSTR_BASIC_SHARES) / 1e6
+        ev_m           = basic_mktcap_m + MSTR_TOTAL_DEBT_M + MSTR_TOTAL_PREF_M - MSTR_CASH_RESERVE_M
+        official_mnav  = ev_m / btc_reserve_m if btc_reserve_m > 0 else 0
 
-        # 官方 mNAV = Enterprise Value / BTC Reserve
-        ev_m          = basic_mktcap_m + MSTR_TOTAL_DEBT_M + MSTR_TOTAL_PREF_M - MSTR_CASH_RESERVE_M
-        official_mnav = ev_m / btc_reserve_m if btc_reserve_m > 0 else 0
-
-        # CEBE mNAV = 股價 / 每股CEBE價值
-        net_btc_value_m  = btc_reserve_m - MSTR_TOTAL_PREF_M - MSTR_TOTAL_DEBT_M
-        cebe_per_share   = (net_btc_value_m * 1e6) / MSTR_ADSO if MSTR_ADSO > 0 else 0
-        cebe_mnav        = mstr_price / cebe_per_share if cebe_per_share > 0 else 0
-        cebe_sats        = int(cebe_per_share / btc_price * 1e8) if btc_price > 0 else 0
-        drag_pct         = (MSTR_TOTAL_PREF_M + MSTR_TOTAL_DEBT_M) / btc_reserve_m * 100
+        net_btc_value_m = btc_reserve_m - MSTR_TOTAL_PREF_M - MSTR_TOTAL_DEBT_M
+        cebe_per_share  = (net_btc_value_m * 1e6) / MSTR_ADSO if MSTR_ADSO > 0 else 0
+        cebe_mnav       = mstr_price / cebe_per_share if cebe_per_share > 0 else 0
+        cebe_sats       = int(cebe_per_share / btc_price * 1e8) if btc_price > 0 else 0
+        drag_pct        = (MSTR_TOTAL_PREF_M + MSTR_TOTAL_DEBT_M) / btc_reserve_m * 100
 
         st.markdown("---")
         st.markdown("### 📈 即時 mNAV 儀表板")
@@ -228,16 +230,16 @@ with st.sidebar:
         cebe_color     = "#f3ba2f" if cebe_mnav >= 1 else "#0ecb81"
 
         st.markdown(f"""
-            <div style="background:#181a20; border:1px solid #2b3139; border-radius:10px; padding:14px; margin-bottom:10px;">
-                <div style="font-size:11px; color:#848e9c; margin-bottom:4px;">🏛️ 官方 mNAV（EV 口徑）</div>
-                <div style="font-size:26px; font-weight:800; color:{official_color}; font-family:monospace;">{official_mnav:.3f}x</div>
-                <div style="font-size:10px; color:#848e9c;">EV ${ev_m/1000:.2f}B ÷ BTC Reserve ${btc_reserve_m/1000:.2f}B</div>
+            <div style="background:#181a20;border:1px solid #2b3139;border-radius:10px;padding:14px;margin-bottom:10px;">
+                <div style="font-size:11px;color:#848e9c;margin-bottom:4px;">🏛️ 官方 mNAV（EV 口徑）</div>
+                <div style="font-size:26px;font-weight:800;color:{official_color};font-family:monospace;">{official_mnav:.3f}x</div>
+                <div style="font-size:10px;color:#848e9c;">EV ${ev_m/1000:.2f}B ÷ BTC Reserve ${btc_reserve_m/1000:.2f}B</div>
             </div>
-            <div style="background:#181a20; border:1px solid #2b3139; border-radius:10px; padding:14px; margin-bottom:10px;">
-                <div style="font-size:11px; color:#848e9c; margin-bottom:4px;">🔬 CEBE mNAV（普通股真實溢價）</div>
-                <div style="font-size:26px; font-weight:800; color:{cebe_color}; font-family:monospace;">{cebe_mnav:.3f}x</div>
-                <div style="font-size:10px; color:#848e9c;">股價 ${mstr_price:.2f} ÷ CEBE ${cebe_per_share:.2f}（{cebe_sats:,} sats）</div>
-                <div style="font-size:10px; color:#f6465d; margin-top:3px;">Drag（債務侵蝕率）= {drag_pct:.1f}%</div>
+            <div style="background:#181a20;border:1px solid #2b3139;border-radius:10px;padding:14px;margin-bottom:10px;">
+                <div style="font-size:11px;color:#848e9c;margin-bottom:4px;">🔬 CEBE mNAV（普通股真實溢價）</div>
+                <div style="font-size:26px;font-weight:800;color:{cebe_color};font-family:monospace;">{cebe_mnav:.3f}x</div>
+                <div style="font-size:10px;color:#848e9c;">股價 ${mstr_price:.2f} ÷ CEBE ${cebe_per_share:.2f}（{cebe_sats:,} sats）</div>
+                <div style="font-size:10px;color:#f6465d;margin-top:3px;">Drag（債務侵蝕率）= {drag_pct:.1f}%</div>
             </div>
         """, unsafe_allow_html=True)
 
@@ -268,7 +270,6 @@ funding_rate            = fetch_funding_rate()
 daily_closes, df_weekly = fetch_historical_data()
 fng_value               = fetch_fear_greed()
 
-# 計算 BTC_PER_SHARE 用基本股數（官方 mNAV 口徑）
 BTC_PER_SHARE = MSTR_BTC_HOLDINGS / MSTR_BASIC_SHARES
 
 total_score, s1, s2, s3, s4, s5, s6, s7, s8, s9 = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
@@ -285,9 +286,7 @@ if ticker_data:
     r14 = (btc_price - daily_closes[-14]) / daily_closes[-14] if len(daily_closes) >= 14 else 0
     s3 = max(0.0, min(5.0,  (0.0 - r14) / 0.15 * 5.0))
     s4 = max(0.0, min(5.0,  (abs(ticker_data['delta']) / 5.0) * 5.0)) if ticker_data['delta'] < 0 else 0.0
-    # s5：真正的恐懼貪婪指數（0=極度恐懼，100=極度貪婪），越恐懼分數越高
     s5 = max(0.0, min(15.0, ((40.0 - float(fng_value)) / 30.0) * 15.0))
-    # s6：BTCUSDT 永續合約資金費率，費率越負分數越高
     s6 = max(0.0, min(15.0, ((0.0001 - funding_rate) / 0.0004) * 15.0))
     if mstr_price and btc_price > 0:
         estimated_nav     = btc_price * BTC_PER_SHARE
@@ -337,30 +336,24 @@ if page == "直男量化經理人版":
     delta_color      = "#0ecb81" if ticker_data and ticker_data['delta'] >= 0 else "#f6465d"
     current_time_str = datetime.now(TAIPEI_TZ).strftime('%Y-%m-%d %H:%M:%S')
 
-    # 判斷恐懼貪婪標籤
     if fng_value <= 25:
-        fng_label = "😱 極度恐懼"
-        fng_color = "#0ecb81"
+        fng_label, fng_color = "😱 極度恐懼", "#0ecb81"
     elif fng_value <= 45:
-        fng_label = "😟 恐懼"
-        fng_color = "#f3ba2f"
+        fng_label, fng_color = "😟 恐懼", "#f3ba2f"
     elif fng_value <= 55:
-        fng_label = "😐 中性"
-        fng_color = "#848e9c"
+        fng_label, fng_color = "😐 中性", "#848e9c"
     elif fng_value <= 75:
-        fng_label = "😏 貪婪"
-        fng_color = "#f3ba2f"
+        fng_label, fng_color = "😏 貪婪", "#f3ba2f"
     else:
-        fng_label = "🤑 極度貪婪"
-        fng_color = "#f6465d"
+        fng_label, fng_color = "🤑 極度貪婪", "#f6465d"
 
     st.markdown(f"""
-        <div style="display:flex; justify-content:space-between; align-items:center; padding:10px 0; border-bottom:1px solid #2b3139; margin-bottom:25px;">
-            <div style="font-size:24px; font-weight:700; color:#eaecef; display:flex; align-items:center; gap:10px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid #2b3139;margin-bottom:25px;">
+            <div style="font-size:24px;font-weight:700;color:#eaecef;display:flex;align-items:center;gap:10px;">
                 <span style="color:#f3ba2f;">🔮</span> BTC 9 因子抄底監控看板
             </div>
-            <div style="font-size:12px; color:#848e9c; text-align:right;">
-                系統狀態：<span style="color:#0ecb81; font-weight:bold;">● 即時串流中</span><br>
+            <div style="font-size:12px;color:#848e9c;text-align:right;">
+                系統狀態：<span style="color:#0ecb81;font-weight:bold;">● 即時串流中</span><br>
                 更新時間：{current_time_str} (台北時間)
             </div>
         </div>
@@ -370,11 +363,11 @@ if page == "直男量化經理人版":
 
     with col_left:
         st.markdown(f"""
-            <div style="background:#181a20; padding:20px; border-radius:12px; border:1px solid #2b3139; margin-bottom:20px;">
-                <div style="font-size:13px; color:#848e9c; font-weight:500; text-transform:uppercase; letter-spacing:1px;">BTC/USD 即時報價</div>
-                <div style="display:flex; align-items:baseline; gap:15px; margin-top:5px;">
-                    <span style="font-size:42px; font-weight:800; color:#eaecef; font-family:monospace;">${btc_price:,.2f}</span>
-                    <span style="font-size:18px; font-weight:600; color:{delta_color};">{price_delta_str}</span>
+            <div style="background:#181a20;padding:20px;border-radius:12px;border:1px solid #2b3139;margin-bottom:20px;">
+                <div style="font-size:13px;color:#848e9c;font-weight:500;text-transform:uppercase;letter-spacing:1px;">BTC/USD 即時報價</div>
+                <div style="display:flex;align-items:baseline;gap:15px;margin-top:5px;">
+                    <span style="font-size:42px;font-weight:800;color:#eaecef;font-family:monospace;">${btc_price:,.2f}</span>
+                    <span style="font-size:18px;font-weight:600;color:{delta_color};">{price_delta_str}</span>
                 </div>
             </div>
         """, unsafe_allow_html=True)
@@ -402,13 +395,13 @@ if page == "直男量化經理人版":
 
         if not df_weekly.empty:
             st.markdown(f"""
-                <div style="font-size:14px; font-weight:600; color:#eaecef; margin:25px 0 10px 0;">
-                    📈 長線跨週期趨勢矩陣（200WMA 支撐位：<span style="color:#f6465d; font-family:monospace;">${ma200_w_current:,.2f}</span>）
+                <div style="font-size:14px;font-weight:600;color:#eaecef;margin:25px 0 10px 0;">
+                    📈 長線跨週期趨勢矩陣（200WMA 支撐位：<span style="color:#f6465d;font-family:monospace;">${ma200_w_current:,.2f}</span>）
                 </div>
             """, unsafe_allow_html=True)
             df_plot = df_weekly.dropna().copy()
             fig_trend = go.Figure()
-            fig_trend.add_trace(go.Scatter(x=df_plot['Date'], y=df_plot['Close'],  mode='lines', name='BTC 現貨',    line=dict(color='#f3ba2f', width=2)))
+            fig_trend.add_trace(go.Scatter(x=df_plot['Date'], y=df_plot['Close'],  mode='lines', name='BTC 現貨',  line=dict(color='#f3ba2f', width=2)))
             fig_trend.add_trace(go.Scatter(x=df_plot['Date'], y=df_plot['200WMA'], mode='lines', name='200週均線', line=dict(color='#f6465d', width=1.5, dash='dash')))
             fig_trend.update_layout(
                 paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
@@ -421,9 +414,9 @@ if page == "直男量化經理人版":
 
     with col_right:
         st.markdown(f"""
-            <div style="background:#181a20; padding:22px; border-radius:12px; border:1px solid #2b3139; margin-bottom:20px; text-align:center;">
-                <div style="font-size:15px; color:#848e9c; font-weight:600; letter-spacing:1px;">🎯 經理人多因子總得分</div>
-                <div class="score-display">{total_score:.1f} <span style="font-size:20px; color:#474d57;">/ 100 分</span></div>
+            <div style="background:#181a20;padding:22px;border-radius:12px;border:1px solid #2b3139;margin-bottom:20px;text-align:center;">
+                <div style="font-size:15px;color:#848e9c;font-weight:600;letter-spacing:1px;">🎯 經理人多因子總得分</div>
+                <div class="score-display">{total_score:.1f} <span style="font-size:20px;color:#474d57;">/ 100 分</span></div>
             </div>
         """, unsafe_allow_html=True)
 
@@ -431,7 +424,7 @@ if page == "直男量化經理人版":
             ratio = score / max_score if max_score > 0 else 0
             if ratio < 0.3:  return '<span class="badge badge-gray">🔴 正常震盪 / 暫無訊號</span>'
             if ratio < 0.65: return '<span class="badge badge-yellow">🟡 波動放大 / 蓄勢觀察</span>'
-            return '<span class="badge" style="background:rgba(14,203,129,0.15);color:#0ecb81;">🟢 極度超跌 / 觸發左側抄底</span>'
+            return '<span class="badge badge-green">🟢 極度超跌 / 觸發左側抄底</span>'
 
         st.markdown(f"""
             <div class="metric-card">
@@ -448,7 +441,7 @@ if page == "直男量化經理人版":
             </div>
             <div class="metric-card">
                 <div class="metric-title"><span>【韭菜探針】加密市場恐懼貪婪指數 [s5] (權重: 15%)</span> {get_ui_badge(s5, 15.0)}</div>
-                <div class="metric-value">{s5:.1f} / 15.0 分 <span style="font-size:12px;color:#848e9c;font-weight:normal;margin-left:10px;">Alternative.me F&G: {fng_value} / 100 &nbsp; {fng_label}</span></div>
+                <div class="metric-value">{s5:.1f} / 15.0 分 <span style="font-size:12px;color:#848e9c;font-weight:normal;margin-left:10px;">Alternative.me F&G: {fng_value} / 100 &nbsp;{fng_label}</span></div>
             </div>
             <div class="metric-card">
                 <div class="metric-title"><span>【成本拉力】大盤生命線偏離度 [s2] (權重: 10%)</span> {get_ui_badge(s2, 10.0)}</div>
@@ -486,19 +479,19 @@ if page == "直男量化經理人版":
         sim_cebe_per_share = (sim_net_value_m * 1e6) / MSTR_ADSO if MSTR_ADSO > 0 else 0
         sim_drag           = (MSTR_TOTAL_PREF_M + MSTR_TOTAL_DEBT_M) / sim_btc_reserve_m * 100
         rows.append({
-            "情境":                     name,
-            "BTC 模擬價格":             f"${p:,.0f}",
-            "每股 CEBE（真實BTC淨值）":  f"${sim_cebe_per_share:,.2f}",
-            "Drag（債務侵蝕率）":        f"{sim_drag:.1f}%",
-            "1.2x 合理防線":            f"${sim_cebe_per_share * 1.2:,.2f}",
-            "1.8x 牛市泡沫線":          f"${sim_cebe_per_share * 1.8:,.2f}",
+            "情境":                    name,
+            "BTC 模擬價格":            f"${p:,.0f}",
+            "每股 CEBE（真實BTC淨值）": f"${sim_cebe_per_share:,.2f}",
+            "Drag（債務侵蝕率）":       f"{sim_drag:.1f}%",
+            "1.2x 合理防線":           f"${sim_cebe_per_share * 1.2:,.2f}",
+            "1.8x 牛市泡沫線":         f"${sim_cebe_per_share * 1.8:,.2f}",
         })
     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
     st.markdown("""
-        <div style="background:#181a20; border:1px solid #2b3139; border-radius:8px; padding:20px; margin:15px 0;">
-            <p style="color:#ffffff; font-size:15px; font-weight:bold; margin-bottom:12px;">💡 如何解讀 CEBE 股價壓力測試？</p>
-            <ul style="color:#ffffff; font-size:14px; line-height:1.7; padding-left:20px;">
+        <div style="background:#181a20;border:1px solid #2b3139;border-radius:8px;padding:20px;margin:15px 0;">
+            <p style="color:#ffffff;font-size:15px;font-weight:bold;margin-bottom:12px;">💡 如何解讀 CEBE 股價壓力測試？</p>
+            <ul style="color:#ffffff;font-size:14px;line-height:1.7;padding-left:20px;">
                 <li style="margin-bottom:8px;"><b>每股 CEBE</b>：扣除可轉債和優先股的優先索償後，普通股真正對應的 BTC 淨值。這才是你實際持有的資產。</li>
                 <li style="margin-bottom:8px;"><b>Drag（拖累率）</b>：BTC 持倉中被債務與優先股吃掉的比例。BTC 漲越多，Drag 越小，普通股分到越多。</li>
                 <li style="margin-bottom:8px;"><b>1.2x 防線</b>：市場回歸理性時的估值下限，股價跌到此區間為左側抄底參考點。</li>
@@ -520,25 +513,22 @@ if page == "直男量化經理人版":
         監控 MSTR 股價相對 BTC 市值的簡化溢價倍數。數據來源：`yfinance` MSTR 即時報價。
 
         #### **3. 【衍生品關卡】BTCUSDT永續合約資金費率 [s6]** — 權重 15%
-        ⚡ **已修正**：改用 Binance USDT-M Futures REST API（`fapi.binance.com`），抓取 BTCUSDT 永續合約資金費率。
-        費率轉負 = 市場多頭清算完畢，為左側抄底訊號。當前費率：**{funding_rate*100:+.4f}%**
+        Binance USDT-M Futures REST API，抓取 BTCUSDT 永續合約資金費率。當前：**{funding_rate*100:+.4f}%**
 
         #### **4. 【韭菜探針】加密市場恐懼貪婪指數 [s5]** — 權重 15%
-        ⚡ **已修正**：改用 Alternative.me 免費公開 API（`api.alternative.me/fng`），這是真正的加密市場恐懼貪婪指數，
-        由 BTC 波動率、市場動量、社群媒體、Google Trends、BTC 市佔率等 5 大因子合成。0=極度恐懼，100=極度貪婪。
-        當前讀數：**{fng_value} / 100（{fng_label}）**
+        Alternative.me 免費公開 API，真正的加密市場恐懼貪婪指數。當前：**{fng_value} / 100（{fng_label}）**
 
         #### **5. 【成本拉力】大盤生命線偏離度 [s2]** — 權重 10%
-        現價低於 MA60 超過 20% 時，成本拉力回歸動能極強。數據來源：`yfinance` 日線滾動計算。
+        現價低於 MA60 超過 20% 時，成本拉力回歸動能極強。
 
         #### **6. 【時空定位】四年減半週期進度 [s9]** — 權重 10%
         自動計算距 2024/4/20 減半日的週期進度，500~800天為歷史築底區間。
 
         #### **7. 【短期套牢】兩週散戶虧損洗盤 [s3]** — 權重 5%
-        量化近兩週追高籌碼被套深度。數據來源：`yfinance` 日線回溯。
+        量化近兩週追高籌碼被套深度。
 
         #### **8. 【恐懼割肉】今日盤中下殺強度 [s4]** — 權重 5%
-        捕捉單日多殺多閃崩幅度，插針撿便宜訊號。
+        捕捉單日多殺多閃崩幅度。
 
         #### **9. 【日內微調】今日撿便宜便宜度 [s1]** — 權重 5%
         現價在今日高低震盪區間中的位置，越靠近最低點分數越高。
@@ -569,9 +559,9 @@ else:
     """, unsafe_allow_html=True)
 
     st.markdown("""
-        <div style="text-align:center; padding:10px 0; border-bottom:3px dashed #ffb6c1; margin-bottom:25px;">
-            <div style="font-size:26px; font-weight:bold; color:#ff69b4;">💖 文元專屬：比特幣「能不能買包包」終極防割监控儀表板</div>
-            <div style="font-size:14px; color:#7f8c8d; margin-top:8px;">👩‍🏫 <b>魏文元專屬小叮嚀：</b>老公有沒有亂買看這裡就對了！</div>
+        <div style="text-align:center;padding:10px 0;border-bottom:3px dashed #ffb6c1;margin-bottom:25px;">
+            <div style="font-size:26px;font-weight:bold;color:#ff69b4;">💖 文元專屬：比特幣「能不能買包包」終極防割监控儀表板</div>
+            <div style="font-size:14px;color:#7f8c8d;margin-top:8px;">👩‍🏫 <b>魏文元專屬小叮嚀：</b>老公有沒有亂買看這裡就對了！</div>
         </div>
     """, unsafe_allow_html=True)
 
@@ -581,10 +571,10 @@ else:
         delta_emoji = "📈 太棒了寶貝！" if ticker_data and ticker_data['delta'] >= 0 else "📉 跌倒了拍拍："
         delta_color = "#2ecc71" if ticker_data and ticker_data['delta'] >= 0 else "#e74c3c"
         st.markdown(f"""
-            <div style="background:white; padding:25px; border-radius:20px; border:3px solid #ffb6c1; text-align:center;">
-                <div style="font-size:16px; color:#7f8c8d; font-weight:bold;">🪙 比特幣現在的價格 (BTC/USD)</div>
-                <div style="font-size:46px; font-weight:bold; color:#ff69b4; margin:10px 0; font-family:monospace;">${btc_price:,.2f}</div>
-                <div style="font-size:16px; font-weight:bold; color:{delta_color};">{delta_emoji} {price_delta_str}</div>
+            <div style="background:white;padding:25px;border-radius:20px;border:3px solid #ffb6c1;text-align:center;">
+                <div style="font-size:16px;color:#7f8c8d;font-weight:bold;">🪙 比特幣現在的價格 (BTC/USD)</div>
+                <div style="font-size:46px;font-weight:bold;color:#ff69b4;margin:10px 0;font-family:monospace;">${btc_price:,.2f}</div>
+                <div style="font-size:16px;font-weight:bold;color:{delta_color};">{delta_emoji} {price_delta_str}</div>
             </div>
         """, unsafe_allow_html=True)
 
@@ -600,12 +590,12 @@ else:
 
         st.markdown(f"""
             <br>
-            <div style="background:linear-gradient(135deg,#fff0f5 0%,#ffe4e1 100%); padding:30px; border-radius:25px; border:3px solid #ff69b4; text-align:center;">
-                <div style="font-size:18px; color:#db7093; font-weight:bold;">🛍️ 當前能不能撿便宜指數</div>
-                <div class="heart-score-display">❤️ {total_score:.1f} <span style="font-size:22px; color:#db7093;">/ 100 滿分</span></div>
-                <div style="margin-top:15px; padding:15px; background:white; border-radius:15px; border:2px solid #ffb6c1;">
-                    <div style="font-size:18px; font-weight:bold; color:#e74c3c;">{advice_title}</div>
-                    <div style="font-size:14px; color:#555555; margin-top:8px; line-height:1.6;">{advice_desc}</div>
+            <div style="background:linear-gradient(135deg,#fff0f5 0%,#ffe4e1 100%);padding:30px;border-radius:25px;border:3px solid #ff69b4;text-align:center;">
+                <div style="font-size:18px;color:#db7093;font-weight:bold;">🛍️ 當前能不能撿便宜指數</div>
+                <div class="heart-score-display">❤️ {total_score:.1f} <span style="font-size:22px;color:#db7093;">/ 100 滿分</span></div>
+                <div style="margin-top:15px;padding:15px;background:white;border-radius:15px;border:2px solid #ffb6c1;">
+                    <div style="font-size:18px;font-weight:bold;color:#e74c3c;">{advice_title}</div>
+                    <div style="font-size:14px;color:#555555;margin-top:8px;line-height:1.6;">{advice_desc}</div>
                 </div>
             </div>
         """, unsafe_allow_html=True)
@@ -617,9 +607,8 @@ else:
             if ratio >= 0.3:  return '<span class="cute-badge badge-watch">🧐 有點風吹草動</span>'
             return '<span class="cute-badge badge-sleep">💤 大家都還在睡</span>'
 
-        # 恐懼貪婪文元版說明
         if fng_value <= 25:
-            fng_cute = f"市場現在超級害怕！（{fng_value}/100）大家都在逃跑，反而是好時機！"
+            fng_cute = f"市場超級害怕！（{fng_value}/100）大家都在逃跑，反而是好時機！"
         elif fng_value <= 45:
             fng_cute = f"大家有點擔心（{fng_value}/100），保持觀望就好。"
         elif fng_value <= 55:
