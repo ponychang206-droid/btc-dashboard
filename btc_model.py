@@ -470,16 +470,14 @@ if page == "直男量化經理人版":
     st.subheader("📊 MSTR CEBE 股價真實價值壓力測試模擬")
     st.markdown(f"基於 **{MSTR_BTC_HOLDINGS:,} BTC** 持倉，扣除所有債務與優先股索償後，模擬不同 BTC 幣價情境下每股真實 BTC 淨值（CEBE 股價）區間：")
 
-    sim_btc_prices = [70000, 100000, 150000]
-    sim_scenarios  = ["熊市低迷情境", "目前市場基準", "狂暴狂牛情境"]
+    sim_btc_prices = list(range(40000, 150001, 10000))  # 4萬 ~ 15萬，每1萬一級距
     rows = []
-    for p, name in zip(sim_btc_prices, sim_scenarios):
+    for p in sim_btc_prices:
         sim_btc_reserve_m  = (MSTR_BTC_HOLDINGS * p) / 1e6
         sim_net_value_m    = sim_btc_reserve_m - MSTR_TOTAL_PREF_M - MSTR_TOTAL_DEBT_M
         sim_cebe_per_share = (sim_net_value_m * 1e6) / MSTR_ADSO if MSTR_ADSO > 0 else 0
         sim_drag           = (MSTR_TOTAL_PREF_M + MSTR_TOTAL_DEBT_M) / sim_btc_reserve_m * 100
         rows.append({
-            "情境":                    name,
             "BTC 模擬價格":            f"${p:,.0f}",
             "每股 CEBE（真實BTC淨值）": f"${sim_cebe_per_share:,.2f}",
             "Drag（債務侵蝕率）":       f"{sim_drag:.1f}%",
