@@ -29,7 +29,7 @@ DEFAULTS = {
     "MSTR_TOTAL_DEBT_M":   6714,
     "MSTR_TOTAL_PREF_M":   15461,
     "MSTR_CASH_RESERVE_M": 2550,
-    "MSTR_ADSO":           386052000,
+    "MSTR_ADSO":           388617000,
 }
 for k, v in DEFAULTS.items():
     # 用 _val 後綴儲存實際數值，與 widget key 分開，避免互相覆蓋
