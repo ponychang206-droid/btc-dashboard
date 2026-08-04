@@ -482,6 +482,11 @@ if page == "直男量化經理人版":
             "每股 CEBE（真實BTC淨值）": f"${sim_cebe_per_share:,.2f}",
             "Drag（債務侵蝕率）":       f"{sim_drag:.1f}%",
             "1.2x 合理防線":           f"${sim_cebe_per_share * 1.2:,.2f}",
+            "1.3x":                    f"${sim_cebe_per_share * 1.3:,.2f}",
+            "1.4x":                    f"${sim_cebe_per_share * 1.4:,.2f}",
+            "1.5x":                    f"${sim_cebe_per_share * 1.5:,.2f}",
+            "1.6x":                    f"${sim_cebe_per_share * 1.6:,.2f}",
+            "1.7x":                    f"${sim_cebe_per_share * 1.7:,.2f}",
             "1.8x 牛市泡沫線":         f"${sim_cebe_per_share * 1.8:,.2f}",
         })
     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
