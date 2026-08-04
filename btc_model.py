@@ -23,8 +23,8 @@ TAIPEI_TZ = ZoneInfo("Asia/Taipei")
 # 關鍵：用獨立的 _val key 儲存數值，與 widget key 完全分開
 # ==========================================
 DEFAULTS = {
-    "MSTR_BTC_HOLDINGS":   843775,
-    "MSTR_AVG_COST":       75476,
+    "MSTR_BTC_HOLDINGS":   842138,
+    "MSTR_AVG_COST":       75419,
     "MSTR_BASIC_SHARES":   387614000,
     "MSTR_TOTAL_DEBT_M":   6714,
     "MSTR_TOTAL_PREF_M":   15350,
