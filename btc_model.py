@@ -25,10 +25,10 @@ TAIPEI_TZ = ZoneInfo("Asia/Taipei")
 DEFAULTS = {
     "MSTR_BTC_HOLDINGS":   840447,
     "MSTR_AVG_COST":       75385,
-    "MSTR_BASIC_SHARES":   397662000,
+    "MSTR_BASIC_SHARES":   415929000,
     "MSTR_TOTAL_DEBT_M":   6714,
-    "MSTR_TOTAL_PREF_M":   15101,
-    "MSTR_CASH_RESERVE_M": 4800,
+    "MSTR_TOTAL_PREF_M":   14966,
+    "MSTR_CASH_RESERVE_M": 6685,
     "MSTR_ADSO":           423850000,
 }
 for k, v in DEFAULTS.items():
@@ -217,7 +217,7 @@ with st.sidebar:
         ev_m           = basic_mktcap_m + MSTR_TOTAL_DEBT_M + MSTR_TOTAL_PREF_M - MSTR_CASH_RESERVE_M
         official_mnav  = ev_m / btc_reserve_m if btc_reserve_m > 0 else 0
 
-        net_btc_value_m = btc_reserve_m - MSTR_TOTAL_PREF_M - MSTR_TOTAL_DEBT_M
+        net_btc_value_m = btc_reserve_m + MSTR_CASH_RESERVE_M - MSTR_TOTAL_PREF_M - MSTR_TOTAL_DEBT_M
         cebe_per_share  = (net_btc_value_m * 1e6) / MSTR_ADSO if MSTR_ADSO > 0 else 0
         cebe_mnav       = mstr_price / cebe_per_share if cebe_per_share > 0 else 0
         cebe_sats       = int(cebe_per_share / btc_price * 1e8) if btc_price > 0 else 0
@@ -474,7 +474,7 @@ if page == "直男量化經理人版":
     rows = []
     for p in sim_btc_prices:
         sim_btc_reserve_m  = (MSTR_BTC_HOLDINGS * p) / 1e6
-        sim_net_value_m    = sim_btc_reserve_m - MSTR_TOTAL_PREF_M - MSTR_TOTAL_DEBT_M
+        sim_net_value_m    = sim_btc_reserve_m + MSTR_CASH_RESERVE_M - MSTR_TOTAL_PREF_M - MSTR_TOTAL_DEBT_M
         sim_cebe_per_share = (sim_net_value_m * 1e6) / MSTR_ADSO if MSTR_ADSO > 0 else 0
         sim_drag           = (MSTR_TOTAL_PREF_M + MSTR_TOTAL_DEBT_M) / sim_btc_reserve_m * 100
         rows.append({
