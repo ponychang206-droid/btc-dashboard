@@ -481,6 +481,8 @@ if page == "直男量化經理人版":
             "BTC 模擬價格":            f"${p:,.0f}",
             "每股 CEBE（真實BTC淨值）": f"${sim_cebe_per_share:,.2f}",
             "Drag（債務侵蝕率）":       f"{sim_drag:.1f}%",
+            "1.0x 清算價值":           f"${sim_cebe_per_share * 1.0:,.2f}",
+            "1.1x":                    f"${sim_cebe_per_share * 1.1:,.2f}",
             "1.2x 合理防線":           f"${sim_cebe_per_share * 1.2:,.2f}",
             "1.3x":                    f"${sim_cebe_per_share * 1.3:,.2f}",
             "1.4x":                    f"${sim_cebe_per_share * 1.4:,.2f}",
