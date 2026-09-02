@@ -217,11 +217,21 @@ with st.sidebar:
         ev_m           = basic_mktcap_m + MSTR_TOTAL_DEBT_M + MSTR_TOTAL_PREF_M - MSTR_CASH_RESERVE_M
         official_mnav  = ev_m / btc_reserve_m if btc_reserve_m > 0 else 0
 
-        net_btc_value_m = btc_reserve_m + MSTR_CASH_RESERVE_M - MSTR_TOTAL_PREF_M - MSTR_TOTAL_DEBT_M
-        cebe_per_share  = (net_btc_value_m * 1e6) / MSTR_ADSO if MSTR_ADSO > 0 else 0
-        cebe_mnav       = mstr_price / cebe_per_share if cebe_per_share > 0 else 0
-        cebe_sats       = int(cebe_per_share / btc_price * 1e8) if btc_price > 0 else 0
-        drag_pct        = (MSTR_TOTAL_PREF_M + MSTR_TOTAL_DEBT_M) / btc_reserve_m * 100
+        # 官方 CEBE 計算法（BTC 數量口徑）
+        # Step 1: 淨索償額 = Debt + Pref - Cash（百萬美元）
+        net_senior_claims_m = MSTR_TOTAL_DEBT_M + MSTR_TOTAL_PREF_M - MSTR_CASH_RESERVE_M
+        # Step 2: 把淨索償額換算成 BTC 數量
+        claims_btc = (net_senior_claims_m * 1e6) / btc_price if btc_price > 0 else 0
+        # Step 3: 普通股對應 BTC = 總持倉 - 索償 BTC
+        common_equity_btc = MSTR_BTC_HOLDINGS - claims_btc
+        # Step 4: 每股 CEBE（sats）= 普通股BTC / 股數 * 1e8
+        cebe_sats = int(common_equity_btc / MSTR_ADSO * 1e8) if MSTR_ADSO > 0 else 0
+        # Step 5: Drag% = 索償BTC / 總持倉BTC
+        drag_pct = claims_btc / MSTR_BTC_HOLDINGS * 100 if MSTR_BTC_HOLDINGS > 0 else 0
+        # 換算每股美元價值與 mNAV
+        cebe_per_share = cebe_sats / 1e8 * btc_price if btc_price > 0 else 0
+        cebe_mnav      = mstr_price / cebe_per_share if cebe_per_share > 0 else 0
+        net_btc_value_m = common_equity_btc * btc_price / 1e6
 
         st.markdown("---")
         st.markdown("### 📈 即時 mNAV 儀表板")
@@ -473,10 +483,17 @@ if page == "直男量化經理人版":
     sim_btc_prices = list(range(40000, 150001, 10000))  # 4萬 ~ 15萬，每1萬一級距
     rows = []
     for p in sim_btc_prices:
-        sim_btc_reserve_m  = (MSTR_BTC_HOLDINGS * p) / 1e6
-        sim_net_value_m    = sim_btc_reserve_m + MSTR_CASH_RESERVE_M - MSTR_TOTAL_PREF_M - MSTR_TOTAL_DEBT_M
-        sim_cebe_per_share = (sim_net_value_m * 1e6) / MSTR_ADSO if MSTR_ADSO > 0 else 0
-        sim_drag           = (MSTR_TOTAL_PREF_M + MSTR_TOTAL_DEBT_M) / sim_btc_reserve_m * 100
+        # 官方 CEBE 計算法（BTC 數量口徑）
+        # Step 1: 淨索償額換算成 BTC 數量
+        sim_claims_btc     = (MSTR_TOTAL_DEBT_M + MSTR_TOTAL_PREF_M - MSTR_CASH_RESERVE_M) * 1e6 / p if p > 0 else 0
+        # Step 2: 普通股對應 BTC
+        sim_common_eq_btc  = MSTR_BTC_HOLDINGS - sim_claims_btc
+        # Step 3: 每股 CEBE sats
+        sim_cebe_sats      = sim_common_eq_btc / MSTR_ADSO * 1e8 if MSTR_ADSO > 0 else 0
+        # Step 4: 每股 CEBE 美元價值
+        sim_cebe_per_share = sim_cebe_sats / 1e8 * p
+        # Step 5: Drag% = 索償BTC / 總持倉BTC
+        sim_drag           = sim_claims_btc / MSTR_BTC_HOLDINGS * 100 if MSTR_BTC_HOLDINGS > 0 else 0
         rows.append({
             "BTC 模擬價格":            f"${p:,.0f}",
             "每股 CEBE（真實BTC淨值）": f"${sim_cebe_per_share:,.2f}",
