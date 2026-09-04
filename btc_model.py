@@ -29,7 +29,7 @@ DEFAULTS = {
     "MSTR_TOTAL_DEBT_M":   6714,
     "MSTR_TOTAL_PREF_M":   14803,
     "MSTR_CASH_RESERVE_M": 6714,
-    "MSTR_ADSO":           450900000,
+    "MSTR_FDSO":           424479000,
 }
 for k, v in DEFAULTS.items():
     # 用 _val 後綴儲存實際數值，與 widget key 分開，避免互相覆蓋
@@ -186,11 +186,11 @@ with st.sidebar:
     st.markdown("### 🔬 CEBE mNAV 參數")
     st.caption("公式：股價 ÷ [(BTC市值 − 優先股 − 總債務) ÷ 完全稀釋股數]")
 
-    MSTR_ADSO = st.number_input(
-        "完全稀釋股數 ADSO",
-        value=st.session_state["MSTR_ADSO_val"],
+    MSTR_FDSO = st.number_input(
+        "完全稀釋股數 FDSO（價內稀釋）",
+        value=st.session_state["MSTR_FDSO_val"],
         step=1000000,
-        key="MSTR_ADSO",
+        key="MSTR_FDSO",
         on_change=save_params
     )
 
@@ -225,7 +225,7 @@ with st.sidebar:
         # Step 3: 普通股對應 BTC = 總持倉 - 索償 BTC
         common_equity_btc = MSTR_BTC_HOLDINGS - claims_btc
         # Step 4: 每股 CEBE（sats）= 普通股BTC / 股數 * 1e8
-        cebe_sats = int(common_equity_btc / MSTR_ADSO * 1e8) if MSTR_ADSO > 0 else 0
+        cebe_sats = int(common_equity_btc / MSTR_FDSO * 1e8) if MSTR_FDSO > 0 else 0
         # Step 5: Drag% = 索償BTC / 總持倉BTC
         drag_pct = claims_btc / MSTR_BTC_HOLDINGS * 100 if MSTR_BTC_HOLDINGS > 0 else 0
         # 換算每股美元價值與 mNAV
@@ -264,7 +264,7 @@ with st.sidebar:
 - BTC 持倉市值：${btc_reserve_m/1000:.2f}B
 - 先扣 Debt + Pref：-${(MSTR_TOTAL_DEBT_M+MSTR_TOTAL_PREF_M)/1000:.2f}B
 - 普通股淨BTC價值：${net_btc_value_m/1000:.2f}B
-- ÷ 完全稀釋股數 {MSTR_ADSO/1e6:.1f}M 股
+- ÷ 完全稀釋股數 {MSTR_FDSO/1e6:.1f}M 股
 - **每股真實BTC淨值：${cebe_per_share:.2f}（{cebe_sats:,} sats）**
 
 Drag = {drag_pct:.1f}%，代表你以為持有的 BTC，有 {drag_pct:.1f}% 屬於債主和優先股，不是你的。
@@ -489,7 +489,7 @@ if page == "直男量化經理人版":
         # Step 2: 普通股對應 BTC
         sim_common_eq_btc  = MSTR_BTC_HOLDINGS - sim_claims_btc
         # Step 3: 每股 CEBE sats
-        sim_cebe_sats      = sim_common_eq_btc / MSTR_ADSO * 1e8 if MSTR_ADSO > 0 else 0
+        sim_cebe_sats      = sim_common_eq_btc / MSTR_FDSO * 1e8 if MSTR_FDSO > 0 else 0
         # Step 4: 每股 CEBE 美元價值
         sim_cebe_per_share = sim_cebe_sats / 1e8 * p
         # Step 5: Drag% = 索償BTC / 總持倉BTC
