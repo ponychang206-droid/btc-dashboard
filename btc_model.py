@@ -463,32 +463,7 @@ with col_sig:
     if macro['dxy'] > 103:
         st.markdown(f'<div class="sig-bear"><div class="sig-t" style="color:#da3633;">🔴 美元偏強（DXY {macro["dxy"]:.2f}）</div><div class="sig-d">強勢美元對 BTC 形成壓力，連帶影響 MSTR。</div></div>', unsafe_allow_html=True)
 
-# ==========================================
-# 6. MSTR/BTC 相對強弱走勢
-# ==========================================
-st.markdown("---")
-st.markdown("#### 📉 MSTR / BTC 相對強弱走勢（6個月）")
-try:
-    mstr_h = yf.Ticker("MSTR").history(period="6mo", interval="1d")['Close']
-    btc_h  = yf.Ticker("BTC-USD").history(period="6mo", interval="1d")['Close']
-    common = mstr_h.index.intersection(btc_h.index)
-    ratio  = mstr_h.loc[common] / btc_h.loc[common] * 1000
 
-    fig2 = go.Figure()
-    fig2.add_trace(go.Scatter(x=ratio.index, y=ratio.values, mode='lines',
-        name='MSTR/BTC 比值（×1000）', line=dict(color='#f3ba2f', width=2)))
-    fig2.update_layout(
-        paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-        xaxis=dict(showgrid=False, tickfont=dict(color='#848e9c')),
-        yaxis=dict(showgrid=True, gridcolor='#21262d', tickfont=dict(color='#848e9c')),
-        height=220, margin=dict(l=0,r=0,t=10,b=0),
-        annotations=[dict(text="比值上升 = MSTR 跑贏 BTC | 下降 = BTC 跑贏 MSTR",
-            xref="paper", yref="paper", x=0, y=1.05, showarrow=False,
-            font=dict(color='#848e9c', size=11))]
-    )
-    st.plotly_chart(fig2, use_container_width=True, config={'displayModeBar': False})
-except:
-    st.warning("無法載入相對強弱數據")
 
 # ==========================================
 # 7. 選擇權鏈
