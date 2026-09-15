@@ -41,11 +41,11 @@ def save_params():
 # ── 備兌買權部位 Session State ──────────────────────────
 CC_POSITIONS_DEFAULT = [
     {"id": 1, "label": "Jan'27 $195", "strike": 195.0, "expiry": "2027-01-16", "contracts": 20, "avg_cost": 86.26, "active": True},
-    {"id": 2, "label": "Nov $160",    "strike": 160.0, "expiry": "2025-11-21", "contracts": 6,  "avg_cost": 79.05, "active": True},
+    {"id": 2, "label": "Nov'26 $160", "strike": 160.0, "expiry": "2026-11-20", "contracts": 6,  "avg_cost": 79.05, "active": True},
     {"id": 3, "label": "Jan'27 $190", "strike": 190.0, "expiry": "2027-01-16", "contracts": 1,  "avg_cost": 83.20, "active": True},
     {"id": 4, "label": "Sep25 $155",  "strike": 155.0, "expiry": "2025-09-25", "contracts": 2,  "avg_cost": 42.11, "active": True},
-    {"id": 5, "label": "Dec $195",    "strike": 195.0, "expiry": "2025-12-19", "contracts": 1,  "avg_cost": 84.47, "active": True},
-    {"id": 6, "label": "Dec $190",    "strike": 190.0, "expiry": "2025-12-19", "contracts": 1,  "avg_cost": -4.49, "active": True},
+    {"id": 5, "label": "Dec'26 $195", "strike": 195.0, "expiry": "2026-12-18", "contracts": 1,  "avg_cost": 84.47, "active": True},
+    {"id": 6, "label": "Dec'26 $190", "strike": 190.0, "expiry": "2026-12-18", "contracts": 1,  "avg_cost": -4.49, "active": True},
 ]
 if "cc_positions" not in st.session_state:
     st.session_state["cc_positions"] = CC_POSITIONS_DEFAULT
@@ -486,18 +486,42 @@ try:
     mstr_obj = yf.Ticker("MSTR")
     exps = mstr_obj.options
     if exps and mstr_price > 0:
-        chain = mstr_obj.option_chain(exps[0])
+        # 提供多個到期日選擇
+        exp_choice = st.selectbox("選擇到期日", exps[:6], index=0)
+        chain = mstr_obj.option_chain(exp_choice)
         calls = chain.calls.copy()
+        puts  = chain.puts.copy()
         calls['dist'] = abs(calls['strike'] - mstr_price)
-        atm_calls = calls[calls['impliedVolatility'] > 0].sort_values('dist').head(8).sort_values('strike')
-        disp = atm_calls[['strike','lastPrice','bid','ask','impliedVolatility','volume','openInterest']].copy()
-        disp.columns = ['履約價','最新成交','Bid','Ask','IV','成交量','未平倉量']
-        disp['IV'] = (disp['IV']*100).round(1).astype(str) + '%'
+
+        # 不過濾IV=0，顯示所有 ATM 附近的履約價
+        atm_calls = calls.sort_values('dist').head(10).sort_values('strike').reset_index(drop=True)
+
+        # 標記 ATM
+        atm_calls['ATM'] = atm_calls['strike'].apply(
+            lambda x: '← ATM' if abs(x - mstr_price) == atm_calls['dist'].min() else '')
+
+        # B-S 重新計算 IV（當市場IV為0時用HV補充）
+        iv_fallback = mstr_data['hv30'] if mstr_data and mstr_data['hv30'] > 0 else 0.8
+        atm_calls['IV顯示'] = atm_calls['impliedVolatility'].apply(
+            lambda x: f"{x*100:.1f}%" if x > 0 else f"~{iv_fallback*100:.1f}%(HV)")
+
+        disp = atm_calls[['strike','lastPrice','bid','ask','IV顯示','volume','openInterest','ATM']].copy()
+        disp.columns = ['履約價','最新成交','Bid','Ask','IV','成交量','未平倉量','']
         disp['履約價'] = disp['履約價'].apply(lambda x: f"${x:.0f}")
-        st.caption(f"到期日：{exps[0]} | MSTR 現價 ${mstr_price:.2f} | Call 選擇權")
+        disp['最新成交'] = disp['最新成交'].apply(lambda x: f"${x:.2f}" if x > 0 else "—")
+        disp['Bid'] = disp['Bid'].apply(lambda x: f"${x:.2f}" if x > 0 else "—")
+        disp['Ask'] = disp['Ask'].apply(lambda x: f"${x:.2f}" if x > 0 else "—")
+        disp['成交量'] = disp['成交量'].apply(lambda x: f"{int(x):,}" if x > 0 else "—")
+        disp['未平倉量'] = disp['未平倉量'].apply(lambda x: f"{int(x):,}" if x > 0 else "—")
+
+        st.caption(f"到期日：{exp_choice} | MSTR 現價 ${mstr_price:.2f} | Call 選擇權 | Bid/Ask 為 '—' 表示盤後無報價，下個交易日開盤後更新")
         st.dataframe(disp.reset_index(drop=True), use_container_width=True, hide_index=True)
-except:
-    st.warning("選擇權鏈載入失敗")
+
+        # Put/Call 比較
+        pc_vol = puts['volume'].sum() / calls['volume'].sum() if calls['volume'].sum() > 0 else 0
+        st.caption(f"📊 P/C 成交量比：{pc_vol:.2f} | Put 總量：{int(puts['volume'].sum()):,} | Call 總量：{int(calls['volume'].sum()):,}")
+except Exception as e:
+    st.warning(f"選擇權鏈載入失敗：{e}")
 
 # ==========================================
 # 7b. 備兌買權部位監控與策略建議
@@ -552,8 +576,9 @@ if mstr_price > 0 and positions:
     for pos in positions:
         try:
             exp_dt = datetime.strptime(pos["expiry"], "%Y-%m-%d")
-            days_left = max(0, (exp_dt - now.replace(tzinfo=None)).days)
-            T = days_left / 365
+            today  = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+            days_left = max(0, (exp_dt - today).days)
+            T = max(days_left, 1) / 365  # 至少1天避免T=0導致B-S失效
         except:
             days_left = 30
             T = 30/365
@@ -597,7 +622,7 @@ if mstr_price > 0 and positions:
     # 總覽
     total_buyback = sum(
         bs_call(mstr_price, p["strike"],
-                max(0,(datetime.strptime(p["expiry"],"%Y-%m-%d")-datetime.now()).days)/365,
+                max(1,(datetime.strptime(p["expiry"],"%Y-%m-%d")-datetime.now().replace(hour=0,minute=0,second=0,microsecond=0)).days)/365,
                 r_rf, atm_iv if atm_iv > 0 else 0.8)[0] * 100 * p["contracts"]
         for p in positions
     )
@@ -617,8 +642,9 @@ if mstr_price > 0 and positions:
     for pos in positions:
         try:
             exp_dt = datetime.strptime(pos["expiry"], "%Y-%m-%d")
-            days_left = max(0, (exp_dt - datetime.now()).days)
-            T = days_left / 365
+            today  = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+            days_left = max(0, (exp_dt - today).days)
+            T = max(days_left, 1) / 365
         except:
             days_left, T = 30, 30/365
 
