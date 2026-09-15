@@ -4,3 +4,4 @@ pandas
 plotly
 yfinance
 binance-futures-connector
+scipy
