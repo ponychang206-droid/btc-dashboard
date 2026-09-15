@@ -38,6 +38,18 @@ def save_params():
         if k in st.session_state:
             st.session_state[f"{k}_val"] = st.session_state[k]
 
+# ── 備兌買權部位 Session State ──────────────────────────
+CC_POSITIONS_DEFAULT = [
+    {"id": 1, "label": "Jan'27 $195", "strike": 195.0, "expiry": "2027-01-16", "contracts": 20, "avg_cost": 86.26, "active": True},
+    {"id": 2, "label": "Nov $160",    "strike": 160.0, "expiry": "2025-11-21", "contracts": 6,  "avg_cost": 79.05, "active": True},
+    {"id": 3, "label": "Jan'27 $190", "strike": 190.0, "expiry": "2027-01-16", "contracts": 1,  "avg_cost": 83.20, "active": True},
+    {"id": 4, "label": "Sep25 $155",  "strike": 155.0, "expiry": "2025-09-25", "contracts": 2,  "avg_cost": 42.11, "active": True},
+    {"id": 5, "label": "Dec $195",    "strike": 195.0, "expiry": "2025-12-19", "contracts": 1,  "avg_cost": 84.47, "active": True},
+    {"id": 6, "label": "Dec $190",    "strike": 190.0, "expiry": "2025-12-19", "contracts": 1,  "avg_cost": -4.49, "active": True},
+]
+if "cc_positions" not in st.session_state:
+    st.session_state["cc_positions"] = CC_POSITIONS_DEFAULT
+
 # ==========================================
 # 1. 數據抓取模組
 # ==========================================
@@ -486,6 +498,198 @@ try:
         st.dataframe(disp.reset_index(drop=True), use_container_width=True, hide_index=True)
 except:
     st.warning("選擇權鏈載入失敗")
+
+# ==========================================
+# 7b. 備兌買權部位監控與策略建議
+# ==========================================
+import math
+from scipy.stats import norm as scipy_norm
+
+def bs_call(S, K, T, r, sigma):
+    """Black-Scholes Call 定價"""
+    if T <= 0 or sigma <= 0 or S <= 0:
+        return max(S - K, 0), 0, 0, 0
+    d1 = (math.log(S/K) + (r + 0.5*sigma**2)*T) / (sigma*math.sqrt(T))
+    d2 = d1 - sigma*math.sqrt(T)
+    price    = S*scipy_norm.cdf(d1) - K*math.exp(-r*T)*scipy_norm.cdf(d2)
+    delta    = scipy_norm.cdf(d1)
+    theta    = (-(S*scipy_norm.pdf(d1)*sigma)/(2*math.sqrt(T)) - r*K*math.exp(-r*T)*scipy_norm.cdf(d2)) / 365
+    prob_itm = scipy_norm.cdf(d2)
+    return price, delta, theta, prob_itm
+
+st.markdown("---")
+st.markdown("## 🎯 備兌買權部位監控與平倉策略")
+
+# 編輯模式
+with st.expander("✏️ 編輯部位（新增/修改/停用）"):
+    positions = st.session_state["cc_positions"]
+    for i, pos in enumerate(positions):
+        c1,c2,c3,c4,c5,c6 = st.columns([2,1.2,1.5,1,1.2,0.8])
+        positions[i]["label"]     = c1.text_input("名稱", pos["label"],     key=f"cc_label_{i}")
+        positions[i]["strike"]    = c2.number_input("履約價$", pos["strike"], step=5.0, key=f"cc_k_{i}")
+        positions[i]["expiry"]    = c3.text_input("到期(YYYY-MM-DD)", pos["expiry"], key=f"cc_exp_{i}")
+        positions[i]["contracts"] = c4.number_input("口數", pos["contracts"], step=1, key=f"cc_ct_{i}")
+        positions[i]["avg_cost"]  = c5.number_input("持倉均價$", pos["avg_cost"], step=0.5, key=f"cc_cost_{i}")
+        positions[i]["active"]    = c6.checkbox("啟用", pos["active"], key=f"cc_act_{i}")
+    if st.button("➕ 新增部位"):
+        st.session_state["cc_positions"].append({
+            "id": len(positions)+1, "label": "新部位",
+            "strike": 200.0, "expiry": "2025-12-19",
+            "contracts": 1, "avg_cost": 0.0, "active": True
+        })
+        st.rerun()
+    st.session_state["cc_positions"] = positions
+
+# 計算並顯示所有部位
+r_rf = 0.045
+positions = [p for p in st.session_state["cc_positions"] if p["active"]]
+
+if mstr_price > 0 and positions:
+    now = datetime.now(TAIPEI_TZ)
+    rows_cc = []
+    urgent_positions = []
+
+    for pos in positions:
+        try:
+            exp_dt = datetime.strptime(pos["expiry"], "%Y-%m-%d")
+            days_left = max(0, (exp_dt - now.replace(tzinfo=None)).days)
+            T = days_left / 365
+        except:
+            days_left = 30
+            T = 30/365
+
+        iv_use = atm_iv if atm_iv > 0 else (mstr_data['hv30'] if mstr_data else 0.8)
+        bs_price, delta, theta, prob_itm = bs_call(mstr_price, pos["strike"], T, r_rf, iv_use)
+
+        # 損益計算（賣出方：收到權利金，現在需要花錢買回）
+        cost_basis  = pos["avg_cost"]   # 當初賣出收到的權利金（或持倉成本）
+        buyback_est = bs_price          # 現在買回的估算成本
+        pnl_per     = cost_basis - buyback_est  # 正=仍有利潤空間，負=已虧損
+        total_pnl   = pnl_per * 100 * pos["contracts"]
+
+        # 緊急程度
+        if prob_itm > 0.7 or days_left <= 14:
+            urgency = "🔴 緊急"
+            urgent_positions.append(pos)
+        elif prob_itm > 0.4 or days_left <= 30:
+            urgency = "🟡 注意"
+        else:
+            urgency = "🟢 安全"
+
+        rows_cc.append({
+            "部位":       pos["label"],
+            "履約價":     f"${pos['strike']:.0f}",
+            "到期":       pos["expiry"],
+            "剩餘天數":   f"{days_left}天",
+            "口數":       pos["contracts"],
+            "B-S估價":    f"${bs_price:.2f}",
+            "Delta":      f"{delta:.2f}",
+            "被指派機率": f"{prob_itm*100:.1f}%",
+            "Theta/天":   f"${theta:.3f}",
+            "每口P&L":    f"${pnl_per*100:+.0f}",
+            "總P&L":      f"${total_pnl:+,.0f}",
+            "狀態":       urgency,
+        })
+
+    df_cc = pd.DataFrame(rows_cc)
+    st.dataframe(df_cc, use_container_width=True, hide_index=True)
+
+    # 總覽
+    total_buyback = sum(
+        bs_call(mstr_price, p["strike"],
+                max(0,(datetime.strptime(p["expiry"],"%Y-%m-%d")-datetime.now()).days)/365,
+                r_rf, atm_iv if atm_iv > 0 else 0.8)[0] * 100 * p["contracts"]
+        for p in positions
+    )
+    total_cost_basis = sum(p["avg_cost"] * 100 * p["contracts"] for p in positions)
+    net_pnl_all = total_cost_basis - total_buyback
+
+    col_a, col_b, col_c = st.columns(3)
+    col_a.metric("全部平倉估算成本", f"${total_buyback:,.0f}")
+    col_b.metric("當初收取權利金總計", f"${total_cost_basis:,.0f}")
+    col_c.metric("淨損益（正=獲利）", f"${net_pnl_all:+,.0f}",
+                 delta="獲利" if net_pnl_all >= 0 else "虧損")
+
+    # 策略建議
+    st.markdown("### 💡 策略建議")
+
+    # 最緊急：Sep25 $155
+    for pos in positions:
+        try:
+            exp_dt = datetime.strptime(pos["expiry"], "%Y-%m-%d")
+            days_left = max(0, (exp_dt - datetime.now()).days)
+            T = days_left / 365
+        except:
+            days_left, T = 30, 30/365
+
+        iv_use = atm_iv if atm_iv > 0 else 0.8
+        bs_price, delta, theta, prob_itm = bs_call(mstr_price, pos["strike"], T, r_rf, iv_use)
+        pnl_per = pos["avg_cost"] - bs_price
+
+        if days_left <= 21 or prob_itm > 0.6:
+            profit_pct = (pos["avg_cost"] - bs_price) / abs(pos["avg_cost"]) * 100 if pos["avg_cost"] != 0 else 0
+            st.markdown(f"""
+<div style="background:#2d1517;border-left:4px solid #da3633;border-radius:6px;padding:14px;margin-bottom:10px;">
+<div style="font-size:13px;font-weight:700;color:#da3633;">🚨 【立即處理】{pos["label"]} — 剩 {days_left} 天，被指派機率 {prob_itm*100:.1f}%</div>
+<div style="font-size:12px;color:#c9d1d9;margin-top:8px;line-height:1.7;">
+<b>選項 A：立即買回平倉</b><br>
+估算買回成本：${bs_price:.2f}/股 × 100 × {pos["contracts"]}口 = <b>${bs_price*100*pos["contracts"]:,.0f}</b><br>
+當初收取：${pos["avg_cost"]:.2f} → 每口損益 ${pnl_per*100:+.0f}，{pos["contracts"]}口合計 <b>${pnl_per*100*pos["contracts"]:+,.0f}</b><br><br>
+<b>選項 B：Roll Forward（向後延期）</b><br>
+買回此部位，同時賣出更遠到期日的相同或更高履約價Call，收取時間價值差額，避免股票被拿走。<br><br>
+<b>選項 C：Roll Up & Out（向上+向後）</b><br>
+若股價已超過履約價，買回後賣出更高履約價+更遠到期的Call，以時間換空間，保留更多上漲空間。
+</div>
+</div>""", unsafe_allow_html=True)
+
+        elif prob_itm > 0.35:
+            st.markdown(f"""
+<div style="background:#1c1f26;border-left:4px solid #f0883e;border-radius:6px;padding:14px;margin-bottom:10px;">
+<div style="font-size:13px;font-weight:700;color:#f0883e;">⚠️ 【持續監控】{pos["label"]} — 被指派機率 {prob_itm*100:.1f}%，剩 {days_left} 天</div>
+<div style="font-size:12px;color:#c9d1d9;margin-top:8px;line-height:1.7;">
+當前 B-S 估價 ${bs_price:.2f}，Theta 每天衰減 ${abs(theta):.3f}（對賣方有利）。<br>
+建議：若股價持續上漲接近 ${pos["strike"]:.0f}，提前評估 Roll Up & Out；若股價回落，等待 Theta 侵蝕後再決策。
+</div>
+</div>""", unsafe_allow_html=True)
+        else:
+            st.markdown(f"""
+<div style="background:#0d2818;border-left:4px solid #238636;border-radius:6px;padding:14px;margin-bottom:10px;">
+<div style="font-size:13px;font-weight:700;color:#238636;">✅ 【安全觀察】{pos["label"]} — 被指派機率 {prob_itm*100:.1f}%，剩 {days_left} 天</div>
+<div style="font-size:12px;color:#c9d1d9;margin-top:8px;">
+Theta 每天衰減 ${abs(theta):.3f}，時間對賣方有利。繼續持有，每日損益：+${abs(theta)*100*pos["contracts"]:.0f}（{pos["contracts"]}口Theta收益）。
+</div>
+</div>""", unsafe_allow_html=True)
+
+    # Roll 策略說明
+    with st.expander("📖 Roll 策略詳細說明"):
+        st.markdown(f"""
+**當前 MSTR 股價：${mstr_price:.2f} | IV：{atm_iv*100:.1f}% | 下一到期日：{next_exp}**
+
+---
+### Roll Forward（向後展期）
+- **適用時機**：股價接近或超過履約價，但你仍看好後市，不想被指派
+- **操作**：買回當前到期的Call，同時賣出相同履約價但更遠到期的Call
+- **淨收支**：通常需要支付少量差額（時間價值較遠的較貴）
+- **效果**：爭取更多時間，讓股價可能回落至履約價下方
+
+### Roll Up & Out（向上且向後展期）
+- **適用時機**：股價已明顯超過履約價，繼續持有原Call必定被指派
+- **操作**：買回當前Call，賣出更高履約價+更遠到期的Call
+- **淨收支**：通常需要支付較大差額（換更高履約價需要付出溢價）
+- **效果**：保留持股，同時鎖定更高的潛在賣出價格
+
+### 直接平倉（Buy to Close）
+- **適用時機**：已獲利50%以上，或距到期剩不到2週且深度價內
+- **黃金法則**：當買回成本 ≤ 原始收取權利金的50%時，提前平倉鎖利並重新賣出新的Call
+- **效果**：釋放資本效率，減少尾端風險
+
+---
+### 你的最緊急部位處理順序
+1. **Sep25 $155（2口）**：最近到期，優先處理
+2. **Nov $160（6口）**：口數最多，影響最大
+3. **Dec $190/$195**：時間充裕，觀察即可
+4. **Jan'27 $190/$195**：超過1年，Theta對你有利，繼續持有
+""")
 
 # ==========================================
 # 8. CEBE 壓力測試模擬表（40k~200k，每1萬一級）
