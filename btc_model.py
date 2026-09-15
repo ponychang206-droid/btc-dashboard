@@ -472,4 +472,302 @@ with col_sig:
     # CEBE mNAV
     if cebe_mnav > 0:
         if cebe_mnav > 1.5:
-            st.markdown(f'<div class="sig-bear"><div
+            st.markdown(f'<div class="sig-bear"><div class="sig-t" style="color:#da3633;">🔴 CEBE mNAV 偏高（{cebe_mnav:.3f}x）</div><div class="sig-d">股價溢價過高，泡沫風險上升，備兌買權履約價可積極設近。</div></div>', unsafe_allow_html=True)
+        elif cebe_mnav < 1.05:
+            st.markdown(f'<div class="sig-bull"><div class="sig-t" style="color:#238636;">🟢 CEBE mNAV 接近清算價值（{cebe_mnav:.3f}x）</div><div class="sig-d">股價接近每股真實BTC淨值，市場定價清算風險，歷史上為優質買點。</div></div>', unsafe_allow_html=True)
+        else:
+            st.markdown(f'<div class="sig-neut"><div class="sig-t" style="color:#8b949e;">⚪ CEBE mNAV 正常（{cebe_mnav:.3f}x）</div><div class="sig-d">溢價在合理區間，持續監控。</div></div>', unsafe_allow_html=True)
+
+    # 宏觀
+    if macro['t10y'] > 4.5:
+        st.markdown(f'<div class="sig-bear"><div class="sig-t" style="color:#da3633;">🔴 美債殖利率偏高（{macro["t10y"]:.2f}%）</div><div class="sig-d">高利率環境壓縮成長股估值，MSTR 溢價可能收縮。</div></div>', unsafe_allow_html=True)
+    if macro['dxy'] > 103:
+        st.markdown(f'<div class="sig-bear"><div class="sig-t" style="color:#da3633;">🔴 美元偏強（DXY {macro["dxy"]:.2f}）</div><div class="sig-d">強勢美元對 BTC 形成壓力，連帶影響 MSTR。</div></div>', unsafe_allow_html=True)
+
+# ==========================================
+# 7. 選擇權鏈
+# ==========================================
+st.markdown("---")
+st.markdown("#### 📋 MSTR 選擇權鏈（ATM 附近，最近到期）")
+try:
+    mstr_obj = yf.Ticker("MSTR")
+    exps = mstr_obj.options
+    if exps and mstr_price > 0:
+        # 提供多個到期日選擇
+        exp_choice = st.selectbox("選擇到期日", exps[:6], index=0)
+        chain = mstr_obj.option_chain(exp_choice)
+        calls = chain.calls.copy()
+        puts  = chain.puts.copy()
+        calls['dist'] = abs(calls['strike'] - mstr_price)
+
+        # 不過濾IV=0，顯示所有 ATM 附近的履約價
+        atm_calls = calls.sort_values('dist').head(10).sort_values('strike').reset_index(drop=True)
+
+        # 標記 ATM
+        atm_calls['ATM'] = atm_calls['strike'].apply(
+            lambda x: '← ATM' if abs(x - mstr_price) == atm_calls['dist'].min() else '')
+
+        # B-S 重新計算 IV（當市場IV為0時用HV補充）
+        iv_fallback = mstr_data['hv30'] if mstr_data and mstr_data['hv30'] > 0 else 0.8
+        atm_calls['IV顯示'] = atm_calls['impliedVolatility'].apply(
+            lambda x: f"{x*100:.1f}%" if x > 0 else f"~{iv_fallback*100:.1f}%(HV)")
+
+        disp = atm_calls[['strike','lastPrice','bid','ask','IV顯示','volume','openInterest','ATM']].copy()
+        disp.columns = ['履約價','最新成交','Bid','Ask','IV','成交量','未平倉量','']
+        disp['履約價'] = disp['履約價'].apply(lambda x: f"${x:.0f}")
+        disp['最新成交'] = disp['最新成交'].apply(lambda x: f"${x:.2f}" if x > 0 else "—")
+        disp['Bid'] = disp['Bid'].apply(lambda x: f"${x:.2f}" if x > 0 else "—")
+        disp['Ask'] = disp['Ask'].apply(lambda x: f"${x:.2f}" if x > 0 else "—")
+        disp['成交量'] = disp['成交量'].apply(lambda x: f"{int(x):,}" if x > 0 else "—")
+        disp['未平倉量'] = disp['未平倉量'].apply(lambda x: f"{int(x):,}" if x > 0 else "—")
+
+        st.caption(f"到期日：{exp_choice} | MSTR 現價 ${mstr_price:.2f} | Call 選擇權 | Bid/Ask 為 '—' 表示盤後無報價，下個交易日開盤後更新")
+        st.dataframe(disp.reset_index(drop=True), use_container_width=True, hide_index=True)
+
+        # Put/Call 比較
+        pc_vol = puts['volume'].sum() / calls['volume'].sum() if calls['volume'].sum() > 0 else 0
+        st.caption(f"📊 P/C 成交量比：{pc_vol:.2f} | Put 總量：{int(puts['volume'].sum()):,} | Call 總量：{int(calls['volume'].sum()):,}")
+except Exception as e:
+    st.warning(f"選擇權鏈載入失敗：{e}")
+
+# ==========================================
+# 7b. 備兌買權部位監控與策略建議
+# ==========================================
+import math
+from scipy.stats import norm as scipy_norm
+
+def bs_call(S, K, T, r, sigma):
+    """Black-Scholes Call 定價"""
+    if T <= 0 or sigma <= 0 or S <= 0:
+        return max(S - K, 0), 0, 0, 0
+    d1 = (math.log(S/K) + (r + 0.5*sigma**2)*T) / (sigma*math.sqrt(T))
+    d2 = d1 - sigma*math.sqrt(T)
+    price    = S*scipy_norm.cdf(d1) - K*math.exp(-r*T)*scipy_norm.cdf(d2)
+    delta    = scipy_norm.cdf(d1)
+    theta    = (-(S*scipy_norm.pdf(d1)*sigma)/(2*math.sqrt(T)) - r*K*math.exp(-r*T)*scipy_norm.cdf(d2)) / 365
+    prob_itm = scipy_norm.cdf(d2)
+    return price, delta, theta, prob_itm
+
+st.markdown("---")
+st.markdown("## 🎯 備兌買權部位監控與平倉策略")
+
+# 編輯模式
+with st.expander("✏️ 編輯部位（新增/修改/停用）"):
+    positions = st.session_state["cc_positions"]
+    for i, pos in enumerate(positions):
+        c1,c2,c3,c4,c5,c6 = st.columns([2,1.2,1.5,1,1.2,0.8])
+        positions[i]["label"]     = c1.text_input("名稱", pos["label"],     key=f"cc_label_{i}")
+        positions[i]["strike"]    = c2.number_input("履約價$", pos["strike"], step=5.0, key=f"cc_k_{i}")
+        positions[i]["expiry"]    = c3.text_input("到期(YYYY-MM-DD)", pos["expiry"], key=f"cc_exp_{i}")
+        positions[i]["contracts"] = c4.number_input("口數", pos["contracts"], step=1, key=f"cc_ct_{i}")
+        positions[i]["avg_cost"]  = c5.number_input("持倉均價$", pos["avg_cost"], step=0.5, key=f"cc_cost_{i}")
+        positions[i]["active"]    = c6.checkbox("啟用", pos["active"], key=f"cc_act_{i}")
+    if st.button("➕ 新增部位"):
+        st.session_state["cc_positions"].append({
+            "id": len(positions)+1, "label": "新部位",
+            "strike": 200.0, "expiry": "2025-12-19",
+            "contracts": 1, "avg_cost": 0.0, "active": True
+        })
+        st.rerun()
+    st.session_state["cc_positions"] = positions
+
+# 計算並顯示所有部位
+r_rf = 0.045
+positions = [p for p in st.session_state["cc_positions"] if p["active"]]
+
+if mstr_price > 0 and positions:
+    now = datetime.now(TAIPEI_TZ)
+    rows_cc = []
+    urgent_positions = []
+
+    for pos in positions:
+        try:
+            exp_dt = datetime.strptime(pos["expiry"], "%Y-%m-%d")
+            today  = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+            days_left = max(0, (exp_dt - today).days)
+            T = max(days_left, 1) / 365  # 至少1天避免T=0導致B-S失效
+        except:
+            days_left = 30
+            T = 30/365
+
+        iv_use = atm_iv if atm_iv > 0 else (mstr_data['hv30'] if mstr_data and mstr_data['hv30'] > 0 else 0.85)
+        if iv_use <= 0:
+            iv_use = 0.85  # MSTR 歷史波動率約 85%
+        bs_price, delta, theta, prob_itm = bs_call(mstr_price, pos["strike"], T, r_rf, iv_use)
+
+        # 損益計算（賣出方：收到權利金，現在需要花錢買回）
+        cost_basis  = pos["avg_cost"]   # 當初賣出收到的權利金（或持倉成本）
+        buyback_est = bs_price          # 現在買回的估算成本
+        pnl_per     = cost_basis - buyback_est  # 正=仍有利潤空間，負=已虧損
+        total_pnl   = pnl_per * 100 * pos["contracts"]
+
+        # 緊急程度
+        if prob_itm > 0.7 or days_left <= 14:
+            urgency = "🔴 緊急"
+            urgent_positions.append(pos)
+        elif prob_itm > 0.4 or days_left <= 30:
+            urgency = "🟡 注意"
+        else:
+            urgency = "🟢 安全"
+
+        rows_cc.append({
+            "部位":       pos["label"],
+            "履約價":     f"${pos['strike']:.0f}",
+            "到期":       pos["expiry"],
+            "剩餘天數":   f"{days_left}天",
+            "口數":       pos["contracts"],
+            "B-S估價":    f"${bs_price:.2f}",
+            "Delta":      f"{delta:.2f}",
+            "被指派機率": f"{prob_itm*100:.1f}%",
+            "Theta/天":   f"${theta:.3f}",
+            "每口P&L":    f"${pnl_per*100:+.0f}",
+            "總P&L":      f"${total_pnl:+,.0f}",
+            "狀態":       urgency,
+        })
+
+    df_cc = pd.DataFrame(rows_cc)
+    st.dataframe(df_cc, use_container_width=True, hide_index=True)
+
+    # 總覽
+    total_buyback = sum(
+        bs_call(mstr_price, p["strike"],
+                max(1,(datetime.strptime(p["expiry"],"%Y-%m-%d")-datetime.now().replace(hour=0,minute=0,second=0,microsecond=0)).days)/365,
+                r_rf, atm_iv if atm_iv > 0 else (mstr_data["hv30"] if mstr_data and mstr_data["hv30"] > 0 else 0.85))[0] * 100 * p["contracts"]
+        for p in positions
+    )
+    total_cost_basis = sum(p["avg_cost"] * 100 * p["contracts"] for p in positions)
+    net_pnl_all = total_cost_basis - total_buyback
+
+    col_a, col_b, col_c = st.columns(3)
+    col_a.metric("全部平倉估算成本", f"${total_buyback:,.0f}")
+    col_b.metric("當初收取權利金總計", f"${total_cost_basis:,.0f}")
+    col_c.metric("淨損益（正=獲利）", f"${net_pnl_all:+,.0f}",
+                 delta="獲利" if net_pnl_all >= 0 else "虧損")
+
+    # 策略建議
+    st.markdown("### 💡 策略建議")
+
+    # 最緊急：Sep25 $155
+    for pos in positions:
+        try:
+            exp_dt = datetime.strptime(pos["expiry"], "%Y-%m-%d")
+            today  = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+            days_left = max(0, (exp_dt - today).days)
+            T = max(days_left, 1) / 365
+        except:
+            days_left, T = 30, 30/365
+
+        iv_use = atm_iv if atm_iv > 0 else (mstr_data["hv30"] if mstr_data and mstr_data["hv30"] > 0 else 0.85)
+        if iv_use <= 0: iv_use = 0.85
+        bs_price, delta, theta, prob_itm = bs_call(mstr_price, pos["strike"], T, r_rf, iv_use)
+        pnl_per = pos["avg_cost"] - bs_price
+
+        if days_left <= 21 or prob_itm > 0.6:
+            profit_pct = (pos["avg_cost"] - bs_price) / abs(pos["avg_cost"]) * 100 if pos["avg_cost"] != 0 else 0
+            st.markdown(f"""
+<div style="background:#2d1517;border-left:4px solid #da3633;border-radius:6px;padding:14px;margin-bottom:10px;">
+<div style="font-size:13px;font-weight:700;color:#da3633;">🚨 【立即處理】{pos["label"]} — 剩 {days_left} 天，被指派機率 {prob_itm*100:.1f}%</div>
+<div style="font-size:12px;color:#c9d1d9;margin-top:8px;line-height:1.7;">
+<b>選項 A：立即買回平倉</b><br>
+估算買回成本：${bs_price:.2f}/股 × 100 × {pos["contracts"]}口 = <b>${bs_price*100*pos["contracts"]:,.0f}</b><br>
+當初收取：${pos["avg_cost"]:.2f} → 每口損益 ${pnl_per*100:+.0f}，{pos["contracts"]}口合計 <b>${pnl_per*100*pos["contracts"]:+,.0f}</b><br><br>
+<b>選項 B：Roll Forward（向後延期）</b><br>
+買回此部位，同時賣出更遠到期日的相同或更高履約價Call，收取時間價值差額，避免股票被拿走。<br><br>
+<b>選項 C：Roll Up & Out（向上+向後）</b><br>
+若股價已超過履約價，買回後賣出更高履約價+更遠到期的Call，以時間換空間，保留更多上漲空間。
+</div>
+</div>""", unsafe_allow_html=True)
+
+        elif prob_itm > 0.35:
+            st.markdown(f"""
+<div style="background:#1c1f26;border-left:4px solid #f0883e;border-radius:6px;padding:14px;margin-bottom:10px;">
+<div style="font-size:13px;font-weight:700;color:#f0883e;">⚠️ 【持續監控】{pos["label"]} — 被指派機率 {prob_itm*100:.1f}%，剩 {days_left} 天</div>
+<div style="font-size:12px;color:#c9d1d9;margin-top:8px;line-height:1.7;">
+當前 B-S 估價 ${bs_price:.2f}，Theta 每天衰減 ${abs(theta):.3f}（對賣方有利）。<br>
+建議：若股價持續上漲接近 ${pos["strike"]:.0f}，提前評估 Roll Up & Out；若股價回落，等待 Theta 侵蝕後再決策。
+</div>
+</div>""", unsafe_allow_html=True)
+        else:
+            st.markdown(f"""
+<div style="background:#0d2818;border-left:4px solid #238636;border-radius:6px;padding:14px;margin-bottom:10px;">
+<div style="font-size:13px;font-weight:700;color:#238636;">✅ 【安全觀察】{pos["label"]} — 被指派機率 {prob_itm*100:.1f}%，剩 {days_left} 天</div>
+<div style="font-size:12px;color:#c9d1d9;margin-top:8px;">
+Theta 每天衰減 ${abs(theta):.3f}，時間對賣方有利。繼續持有，每日損益：+${abs(theta)*100*pos["contracts"]:.0f}（{pos["contracts"]}口Theta收益）。
+</div>
+</div>""", unsafe_allow_html=True)
+
+    # Roll 策略說明
+    with st.expander("📖 Roll 策略詳細說明"):
+        st.markdown(f"""
+**當前 MSTR 股價：${mstr_price:.2f} | IV：{atm_iv*100:.1f}% | 下一到期日：{next_exp}**
+
+---
+### Roll Forward（向後展期）
+- **適用時機**：股價接近或超過履約價，但你仍看好後市，不想被指派
+- **操作**：買回當前到期的Call，同時賣出相同履約價但更遠到期的Call
+- **淨收支**：通常需要支付少量差額（時間價值較遠的較貴）
+- **效果**：爭取更多時間，讓股價可能回落至履約價下方
+
+### Roll Up & Out（向上且向後展期）
+- **適用時機**：股價已明顯超過履約價，繼續持有原Call必定被指派
+- **操作**：買回當前Call，賣出更高履約價+更遠到期的Call
+- **淨收支**：通常需要支付較大差額（換更高履約價需要付出溢價）
+- **效果**：保留持股，同時鎖定更高的潛在賣出價格
+
+### 直接平倉（Buy to Close）
+- **適用時機**：已獲利50%以上，或距到期剩不到2週且深度價內
+- **黃金法則**：當買回成本 ≤ 原始收取權利金的50%時，提前平倉鎖利並重新賣出新的Call
+- **效果**：釋放資本效率，減少尾端風險
+
+---
+### 你的最緊急部位處理順序
+1. **Sep25 $155（2口）**：最近到期，優先處理
+2. **Nov $160（6口）**：口數最多，影響最大
+3. **Dec $190/$195**：時間充裕，觀察即可
+4. **Jan'27 $190/$195**：超過1年，Theta對你有利，繼續持有
+""")
+
+# ==========================================
+# 8. CEBE 壓力測試模擬表（40k~200k，每1萬一級）
+# ==========================================
+st.markdown("---")
+st.subheader("📊 MSTR CEBE 股價真實價值壓力測試模擬")
+st.markdown(f"基於 **{MSTR_BTC_HOLDINGS:,} BTC** 持倉，官方 CEBE 計算法（BTC數量口徑），模擬 BTC $40,000 ~ $200,000 每股真實淨值區間：")
+
+sim_prices = list(range(40000, 200001, 10000))
+rows = []
+for p in sim_prices:
+    sim_claims_btc    = (MSTR_TOTAL_DEBT_M + MSTR_TOTAL_PREF_M - MSTR_CASH_RESERVE_M) * 1e6 / p
+    sim_common_btc    = MSTR_BTC_HOLDINGS - sim_claims_btc
+    sim_cebe_sats     = sim_common_btc / MSTR_FDSO * 1e8 if MSTR_FDSO > 0 else 0
+    sim_cebe_usd      = sim_cebe_sats / 1e8 * p
+    sim_drag          = sim_claims_btc / MSTR_BTC_HOLDINGS * 100
+    rows.append({
+        "BTC 模擬價格":            f"${p:,.0f}",
+        "每股 CEBE（sats）":       f"{sim_cebe_sats:,.0f}",
+        "每股 CEBE（USD）":        f"${sim_cebe_usd:,.2f}",
+        "Drag（債務侵蝕率）":       f"{sim_drag:.1f}%",
+        "1.0x 清算價值":           f"${sim_cebe_usd * 1.0:,.2f}",
+        "1.1x":                    f"${sim_cebe_usd * 1.1:,.2f}",
+        "1.2x 合理防線":           f"${sim_cebe_usd * 1.2:,.2f}",
+        "1.3x":                    f"${sim_cebe_usd * 1.3:,.2f}",
+        "1.4x":                    f"${sim_cebe_usd * 1.4:,.2f}",
+        "1.5x":                    f"${sim_cebe_usd * 1.5:,.2f}",
+        "1.6x 泡沫警戒":           f"${sim_cebe_usd * 1.6:,.2f}",
+    })
+
+st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+st.markdown("""
+<div style="background:#181a20;border:1px solid #2b3139;border-radius:8px;padding:16px;margin:12px 0;">
+    <p style="color:#fff;font-size:13px;font-weight:bold;margin-bottom:10px;">💡 如何解讀此表？</p>
+    <ul style="color:#fff;font-size:12px;line-height:1.7;padding-left:18px;">
+        <li><b>每股 CEBE sats</b>：不受 BTC 價格影響，是衡量每股含金量的穩定指標，越高越好。</li>
+        <li><b>每股 CEBE USD</b>：真實清算價值，股價應在此基礎上給予溢價。</li>
+        <li><b>Drag</b>：BTC 越漲，侵蝕率越低，普通股股東受益越多。</li>
+        <li><b>1.0x</b>：清算警戒線，股價跌到此處代表市場開始定價清算風險。</li>
+        <li><b>1.2x</b>：歷史合理防線，左側抄底參考點。</li>
+        <li><b>1.6x</b>：泡沫警戒，超過此線需謹慎追多。</li>
+    </ul>
+</div>
+""", unsafe_allow_html=True)
