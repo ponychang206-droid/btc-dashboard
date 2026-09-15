@@ -43,7 +43,7 @@ CC_POSITIONS_DEFAULT = [
     {"id": 1, "label": "Jan'27 $195", "strike": 195.0, "expiry": "2027-01-16", "contracts": 20, "avg_cost": 86.26, "active": True},
     {"id": 2, "label": "Nov'26 $160", "strike": 160.0, "expiry": "2026-11-20", "contracts": 6,  "avg_cost": 79.05, "active": True},
     {"id": 3, "label": "Jan'27 $190", "strike": 190.0, "expiry": "2027-01-16", "contracts": 1,  "avg_cost": 83.20, "active": True},
-    {"id": 4, "label": "Sep25 $155",  "strike": 155.0, "expiry": "2025-09-25", "contracts": 2,  "avg_cost": 42.11, "active": True},
+    {"id": 4, "label": "Sep'26 $155", "strike": 155.0, "expiry": "2026-09-25", "contracts": 2,  "avg_cost": 42.11, "active": True},
     {"id": 5, "label": "Dec'26 $195", "strike": 195.0, "expiry": "2026-12-18", "contracts": 1,  "avg_cost": 84.47, "active": True},
     {"id": 6, "label": "Dec'26 $190", "strike": 190.0, "expiry": "2026-12-18", "contracts": 1,  "avg_cost": -4.49, "active": True},
 ]
