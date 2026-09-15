@@ -534,7 +534,7 @@ with st.expander("✏️ 編輯部位（新增/修改/停用）"):
     if st.button("➕ 新增部位"):
         st.session_state["cc_positions"].append({
             "id": len(positions)+1, "label": "新部位",
-            "strike": 200.0, "expiry": "2025-12-19",
+            "strike": 200.0, "expiry": "2026-12-19",
             "contracts": 1, "avg_cost": 0.0, "active": True
         })
         st.rerun()
