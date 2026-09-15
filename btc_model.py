@@ -41,11 +41,11 @@ def save_params():
 # ── 備兌買權部位 Session State ──────────────────────────
 CC_POSITIONS_DEFAULT = [
     {"id": 1, "label": "Jan'27 $195", "strike": 195.0, "expiry": "2027-01-16", "contracts": 20, "avg_cost": 86.26, "active": True},
-    {"id": 2, "label": "Nov $160",    "strike": 160.0, "expiry": "2025-11-21", "contracts": 6,  "avg_cost": 79.05, "active": True},
+    {"id": 2, "label": "Nov $160",    "strike": 160.0, "expiry": "2026-11-21", "contracts": 6,  "avg_cost": 79.05, "active": True},
     {"id": 3, "label": "Jan'27 $190", "strike": 190.0, "expiry": "2027-01-16", "contracts": 1,  "avg_cost": 83.20, "active": True},
-    {"id": 4, "label": "Sep25 $155",  "strike": 155.0, "expiry": "2025-09-25", "contracts": 2,  "avg_cost": 42.11, "active": True},
-    {"id": 5, "label": "Dec $195",    "strike": 195.0, "expiry": "2025-12-19", "contracts": 1,  "avg_cost": 84.47, "active": True},
-    {"id": 6, "label": "Dec $190",    "strike": 190.0, "expiry": "2025-12-19", "contracts": 1,  "avg_cost": -4.49, "active": True},
+    {"id": 4, "label": "Sep25 $155",  "strike": 155.0, "expiry": "2026-09-25", "contracts": 2,  "avg_cost": 42.11, "active": True},
+    {"id": 5, "label": "Dec $195",    "strike": 195.0, "expiry": "2026-12-19", "contracts": 1,  "avg_cost": 84.47, "active": True},
+    {"id": 6, "label": "Dec $190",    "strike": 190.0, "expiry": "2026-12-19", "contracts": 1,  "avg_cost": -4.49, "active": True},
 ]
 if "cc_positions" not in st.session_state:
     st.session_state["cc_positions"] = CC_POSITIONS_DEFAULT
