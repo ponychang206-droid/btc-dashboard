@@ -39,22 +39,16 @@ def save_params():
             st.session_state[f"{k}_val"] = st.session_state[k]
 
 # ── 備兌買權部位 Session State ──────────────────────────
-# 根據 2026-09-15 截圖更新持倉成本
 CC_POSITIONS_DEFAULT = [
-    # Jan'27 $195: 賣出19口@6.79 + 賣出1口@6.69 = 淨收 135.70 / 20口 = 6.785 (67.89美元/口)
-    {"id": 1, "label": "Jan'27 $195", "strike": 195.0, "expiry": "2027-01-16", "contracts": 20, "avg_cost": 67.89, "active": True},
-    # Nov'26 $160: 賣出6口@13.99
-    {"id": 2, "label": "Nov'26 $160", "strike": 160.0, "expiry": "2026-11-20", "contracts": 6,  "avg_cost": 13.99, "active": True},
-    # Jan'27 $190: 賣出1口@9.85
-    {"id": 3, "label": "Jan'27 $190", "strike": 190.0, "expiry": "2027-01-16", "contracts": 1,  "avg_cost": 9.85, "active": True},
-    # Sep'26 $155: 賣出2口@4.75
-    {"id": 4, "label": "Sep'26 $155", "strike": 155.0, "expiry": "2026-09-25", "contracts": 2,  "avg_cost": 4.75, "active": True},
-    # Sep'26 $140: 賣出1口@3.49
-    {"id": 5, "label": "Sep'26 $140", "strike": 140.0, "expiry": "2026-09-25", "contracts": 1,  "avg_cost": 3.49, "active": True},
-    # Dec'26 $195: 賣出1口@8.58
-    {"id": 6, "label": "Dec'26 $195", "strike": 195.0, "expiry": "2026-12-18", "contracts": 1,  "avg_cost": 8.58, "active": True},
-    # Dec'26 $190: 賣出1口@5.17
-    {"id": 7, "label": "Dec'26 $190", "strike": 190.0, "expiry": "2026-12-18", "contracts": 1,  "avg_cost": 5.17, "active": True},
+    # MSTR 部位（依到期日排序）
+    {"id": 1, "label": "MSTR Sep'26 $155", "strike": 155.0, "expiry": "2026-09-25", "contracts": 2,  "avg_cost": 4.75,  "ticker": "MSTR", "active": True},
+    {"id": 2, "label": "MSTR Nov'26 $160", "strike": 160.0, "expiry": "2026-11-20", "contracts": 6,  "avg_cost": 13.99, "ticker": "MSTR", "active": True},
+    {"id": 3, "label": "MSTR Dec'26 $190", "strike": 190.0, "expiry": "2026-12-18", "contracts": 1,  "avg_cost": 5.17,  "ticker": "MSTR", "active": True},
+    {"id": 4, "label": "MSTR Dec'26 $195", "strike": 195.0, "expiry": "2026-12-18", "contracts": 1,  "avg_cost": 8.58,  "ticker": "MSTR", "active": True},
+    {"id": 5, "label": "MSTR Jan'27 $190", "strike": 190.0, "expiry": "2027-01-15", "contracts": 1,  "avg_cost": 9.85,  "ticker": "MSTR", "active": True},
+    {"id": 6, "label": "MSTR Jan'27 $195", "strike": 195.0, "expiry": "2027-01-15", "contracts": 20, "avg_cost": 6.79,  "ticker": "MSTR", "active": True},
+    # COIN 部位
+    {"id": 7, "label": "COIN Nov'26 $210", "strike": 210.0, "expiry": "2026-11-20", "contracts": 3,  "avg_cost": 19.77, "ticker": "COIN", "active": True},
 ]
 if "cc_positions" not in st.session_state:
     st.session_state["cc_positions"] = CC_POSITIONS_DEFAULT
@@ -259,6 +253,7 @@ with st.sidebar:
         cebe_mnav           = mstr_price / cebe_per_share if cebe_per_share > 0 else 0
     else:
         official_mnav = cebe_mnav = cebe_sats = drag_pct = cebe_per_share = 0
+        btc_reserve_m = basic_mktcap_m = ev_m = net_claims_m = claims_btc = common_equity_btc = 0
 
     # 持倉損益
     if btc_price > 0:
@@ -483,6 +478,8 @@ with col_sig:
         st.markdown(f'<div class="sig-bear"><div class="sig-t" style="color:#da3633;">🔴 美債殖利率偏高（{macro["t10y"]:.2f}%）</div><div class="sig-d">高利率環境壓縮成長股估值，MSTR 溢價可能收縮。</div></div>', unsafe_allow_html=True)
     if macro['dxy'] > 103:
         st.markdown(f'<div class="sig-bear"><div class="sig-t" style="color:#da3633;">🔴 美元偏強（DXY {macro["dxy"]:.2f}）</div><div class="sig-d">強勢美元對 BTC 形成壓力，連帶影響 MSTR。</div></div>', unsafe_allow_html=True)
+
+
 
 # ==========================================
 # 7. 選擇權鏈
