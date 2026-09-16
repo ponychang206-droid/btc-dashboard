@@ -101,7 +101,7 @@ def fetch_mstr_data():
 
 @st.cache_data(ttl=60)
 def fetch_mstr_options():
-    """修正版：加入 IV 合理範圍過濾與中位數保護"""
+    """修正版：IV 過濾門檻提高至 20%，避免異常值污染"""
     try:
         mstr = yf.Ticker("MSTR")
         exps = mstr.options
@@ -112,26 +112,22 @@ def fetch_mstr_options():
         puts      = chain.puts
         pc_ratio  = float(puts['volume'].sum() / calls['volume'].sum()) if calls['volume'].sum() > 0 else 1.0
 
-        # ── 修正 IV 抓取邏輯 ──────────────────────────
         mstr_data_inner = fetch_mstr_data()
         atm_iv = 0
         if mstr_data_inner:
             p = mstr_data_inner['price']
 
-            # 1. 只保留 IV 在合理範圍 (10% ~ 300%) 的合約
-            calls_v = calls[(calls['impliedVolatility'] > 0.10) &
+            # 提高過濾門檻：只接受 IV 在 20% ~ 300% 之間的合約
+            calls_v = calls[(calls['impliedVolatility'] > 0.20) &
                             (calls['impliedVolatility'] < 3.00)].copy()
 
             if not calls_v.empty:
-                # 2. 找出最接近現價的 5 個合約
                 calls_v['dist'] = abs(calls_v['strike'] - p)
                 near_atm = calls_v.sort_values('dist').head(5)
-
-                # 3. 取這 5 個合約 IV 的中位數，避免單一異常值
                 atm_iv = float(near_atm['impliedVolatility'].median())
 
-                # 4. 如果中位數還是太離譜（例如 < 10%），就改用 HV30 替代
-                if atm_iv < 0.10 or atm_iv > 3.00:
+                # 如果中位數還是 < 20%，直接 fallback 到 HV30
+                if atm_iv < 0.20 or atm_iv > 3.00:
                     atm_iv = mstr_data_inner['hv30'] if mstr_data_inner['hv30'] > 0 else 0.85
 
         return atm_iv, pc_ratio, exps[0]
@@ -140,16 +136,25 @@ def fetch_mstr_options():
 
 @st.cache_data(ttl=60)
 def fetch_beta_mstr_btc():
+    """修正版：改用 pd.concat 對齊日期，解決 Beta = 0 的問題"""
     try:
         mstr = yf.Ticker("MSTR").history(period="3mo", interval="1d")
         btc  = yf.Ticker("BTC-USD").history(period="3mo", interval="1d")
+
+        # 移除時區，只保留日期
+        mstr.index = mstr.index.tz_localize(None)
+        btc.index  = btc.index.tz_localize(None)
+
         m_ret = mstr['Close'].pct_change().dropna()
         b_ret = btc['Close'].pct_change().dropna()
-        common = m_ret.index.intersection(b_ret.index)
-        if len(common) < 10:
+
+        # 用 pd.concat 對齊日期
+        combined = pd.concat([m_ret, b_ret], axis=1, join='inner').dropna()
+        if len(combined) < 10:
             return 0
-        cov = np.cov(m_ret.loc[common], b_ret.loc[common])[0][1]
-        var = np.var(b_ret.loc[common])
+
+        cov = np.cov(combined.iloc[:, 0], combined.iloc[:, 1])[0][1]
+        var = np.var(combined.iloc[:, 1])
         return cov / var if var != 0 else 0
     except:
         return 0
@@ -583,13 +588,11 @@ if mstr_price > 0 and positions:
             iv_use = 0.85
         bs_price, delta, theta, prob_itm = bs_call(mstr_price, pos["strike"], T, r_rf, iv_use)
 
-        # 損益計算（賣出方：收到權利金，現在需要花錢買回）
-        net_cash    = pos["net_cash"]   # 這筆合約歷史淨收入總額
-        buyback_est = bs_price * 100 * pos["contracts"]  # 現在買回的估算總成本
+        net_cash    = pos["net_cash"]
+        buyback_est = bs_price * 100 * pos["contracts"]
         total_pnl   = net_cash - buyback_est
         pnl_per     = total_pnl / pos["contracts"] if pos["contracts"] > 0 else 0
 
-        # 緊急程度
         if prob_itm > 0.7 or days_left <= 14:
             urgency = "🔴 緊急"
             urgent_positions.append(pos)
@@ -616,7 +619,6 @@ if mstr_price > 0 and positions:
     df_cc = pd.DataFrame(rows_cc)
     st.dataframe(df_cc, use_container_width=True, hide_index=True)
 
-    # 總覽
     total_buyback = sum(
         bs_call(mstr_price, p["strike"],
                 max(1,(datetime.strptime(p["expiry"],"%Y-%m-%d")-datetime.now().replace(hour=0,minute=0,second=0,microsecond=0)).days)/365,
@@ -631,6 +633,58 @@ if mstr_price > 0 and positions:
     col_b.metric("這批合約歷史淨收入", f"${total_net_cash:,.0f}")
     col_c.metric("淨損益（正=獲利）", f"${net_pnl_all:+,.0f}",
                  delta="獲利" if net_pnl_all >= 0 else "虧損")
+
+    # ==========================================
+    # 期權指標解釋定義
+    # ==========================================
+    with st.expander("📖 期權指標解釋：B-S估價、Delta、Theta/天"):
+        st.markdown(f"""
+### 📌 B-S估價（Black-Scholes 估價）
+**定義**：用 Black-Scholes 選擇權定價模型計算出來的**理論合理價格**。
+
+**對賣方的意義**：這代表**你現在如果要買回這口合約，大概要花多少錢**。
+
+**如何解讀**：
+- B-S 估價 **遠低於**你當初賣出的價格 → 你處於獲利狀態。
+- B-S 估價 **接近或高於**你當初賣出的價格 → 你處於虧損狀態，或即將被指派。
+- 這是理論價，實際買回價格要看市場的 Bid/Ask。
+
+---
+
+### 📌 Delta
+**定義**：選擇權價格對「股價變動」的敏感度。範圍在 0 ~ 1 之間（Call）。
+
+**對賣方的意義**：代表**「股價每上漲 1 美元，這口合約的理論價格會上漲多少美元」**。
+
+**如何解讀**：
+- **Delta = 0.2**：股價漲 1 元，合約漲 0.2 元。股價離履約價還很遠，**相對安全**。
+- **Delta = 0.8**：股價漲 1 元，合約漲 0.8 元。股價已接近或超過履約價，**被指派的風險極高**。
+- Delta 也可以粗略視為「被指派的機率」。
+
+---
+
+### 📌 Theta/天
+**定義**：選擇權價格對「時間流逝」的敏感度。代表**「每過一天，這口合約的理論價格會衰減多少錢」**。
+
+**對賣方的意義**：因為你是**賣方**，時間衰減對你**有利**。這代表你每天躺著不動，就能賺到的錢（假設股價不變）。
+
+**如何解讀**：
+- Theta 絕對值越大，代表時間價值流逝越快，對賣方越有利。
+- 通常越接近到期日，Theta 的衰減會越劇烈（加速度衰減）。
+- 如果 Theta 很小（例如 -0.01），代表這口合約已經沒什麼時間價值可賺了，可以考慮平倉換新的合約。
+
+---
+
+### 📌 被指派機率
+**定義**：根據 B-S 模型中的 `d2` 參數計算出來的**「到期時，股價高於履約價的機率」**。
+
+**對賣方的意義**：這是**你最需要關注的風險指標**。如果這個機率很高，代表時間價值所剩無幾，你很有可能在到期時被要求用履約價賣出股票。
+
+**如何解讀**：
+- **< 30%**：🟢 安全。時間對你有利，可以繼續放著收 Theta。
+- **30% ~ 60%**：🟡 注意。股價開始靠近履約價，需開始考慮 Roll 倉。
+- **> 60%**：🔴 緊急。大概率會被指派，必須立刻決定要平倉、Roll 倉，還是接受被拿走股票。
+""")
 
     # 策略建議
     st.markdown("### 💡 策略建議")
