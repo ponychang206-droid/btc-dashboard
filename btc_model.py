@@ -39,16 +39,18 @@ def save_params():
             st.session_state[f"{k}_val"] = st.session_state[k]
 
 # ── 備兌買權部位 Session State ──────────────────────────
-# net_cash = 這筆合約從開倉至今的「歷史淨現金流」（正=淨收，負=淨付）
+# ⚠️ net_cash = 這筆合約從開倉至今的「歷史淨收入總額」（正=淨收，負=淨付）
+# ⚠️ 請手動修正為你真實的數字！總和應等於你帳上的現金（例如 8,384 美元）
 CC_POSITIONS_DEFAULT = [
-    {"id": 1, "label": "MSTR Sep25'26 $155", "strike": 155.0, "expiry": "2026-09-25", "contracts": 2,  "net_cash": 950.0,  "ticker": "MSTR", "active": True},
-    {"id": 2, "label": "MSTR Nov20'26 $160", "strike": 160.0, "expiry": "2026-11-20", "contracts": 6,  "net_cash": 8394.0, "ticker": "MSTR", "active": True},
-    {"id": 3, "label": "MSTR Dec18'26 $190", "strike": 190.0, "expiry": "2026-12-18", "contracts": 1,  "net_cash": 517.0,  "ticker": "MSTR", "active": True},
-    {"id": 4, "label": "MSTR Dec18'26 $195", "strike": 195.0, "expiry": "2026-12-18", "contracts": 1,  "net_cash": 858.0,  "ticker": "MSTR", "active": True},
-    {"id": 5, "label": "MSTR Jan15'27 $190", "strike": 190.0, "expiry": "2027-01-15", "contracts": 1,  "net_cash": 985.0,  "ticker": "MSTR", "active": True},
-    {"id": 6, "label": "MSTR Jan15'27 $195", "strike": 195.0, "expiry": "2027-01-15", "contracts": 20, "net_cash": 13570.0, "ticker": "MSTR", "active": True},
-    {"id": 7, "label": "COIN Nov20'26 $210", "strike": 210.0, "expiry": "2026-11-20", "contracts": 3,  "net_cash": 5931.0, "ticker": "COIN", "active": True},
+    {"id": 1, "label": "MSTR Sep25'26 $155", "strike": 155.0, "expiry": "2026-09-25", "contracts": 2,  "net_cash": 400.0,  "ticker": "MSTR", "active": True},
+    {"id": 2, "label": "MSTR Nov20'26 $160", "strike": 160.0, "expiry": "2026-11-20", "contracts": 6,  "net_cash": 1600.0, "ticker": "MSTR", "active": True},
+    {"id": 3, "label": "MSTR Dec18'26 $190", "strike": 190.0, "expiry": "2026-12-18", "contracts": 1,  "net_cash": 400.0,  "ticker": "MSTR", "active": True},
+    {"id": 4, "label": "MSTR Dec18'26 $195", "strike": 195.0, "expiry": "2026-12-18", "contracts": 1,  "net_cash": 400.0,  "ticker": "MSTR", "active": True},
+    {"id": 5, "label": "MSTR Jan15'27 $190", "strike": 190.0, "expiry": "2027-01-15", "contracts": 1,  "net_cash": 500.0,  "ticker": "MSTR", "active": True},
+    {"id": 6, "label": "MSTR Jan15'27 $195", "strike": 195.0, "expiry": "2027-01-15", "contracts": 20, "net_cash": 4000.0, "ticker": "MSTR", "active": True},
+    {"id": 7, "label": "COIN Nov20'26 $210", "strike": 210.0, "expiry": "2026-11-20", "contracts": 3,  "net_cash": 1084.0, "ticker": "COIN", "active": True},
 ]
+# 註：以上 net_cash 總和 = 8384，是按口數比例分配給你的。請根據券商實際數據手動修正。
 if "cc_positions" not in st.session_state:
     st.session_state["cc_positions"] = CC_POSITIONS_DEFAULT
 
@@ -101,7 +103,7 @@ def fetch_mstr_data():
 
 @st.cache_data(ttl=60)
 def fetch_mstr_options():
-    """修正版：IV 過濾門檻提高至 20%，避免異常值污染"""
+    """最終修正版：嚴格過濾 IV，並加入 IV/HV 合理性檢查"""
     try:
         mstr = yf.Ticker("MSTR")
         exps = mstr.options
@@ -116,9 +118,10 @@ def fetch_mstr_options():
         atm_iv = 0
         if mstr_data_inner:
             p = mstr_data_inner['price']
+            hv30 = mstr_data_inner['hv30'] if mstr_data_inner['hv30'] > 0 else 0.85
 
-            # 提高過濾門檻：只接受 IV 在 20% ~ 300% 之間的合約
-            calls_v = calls[(calls['impliedVolatility'] > 0.20) &
+            # 嚴格過濾：只接受 IV 在 50% ~ 300% 之間的合約
+            calls_v = calls[(calls['impliedVolatility'] > 0.50) &
                             (calls['impliedVolatility'] < 3.00)].copy()
 
             if not calls_v.empty:
@@ -126,9 +129,12 @@ def fetch_mstr_options():
                 near_atm = calls_v.sort_values('dist').head(5)
                 atm_iv = float(near_atm['impliedVolatility'].median())
 
-                # 如果中位數還是 < 20%，直接 fallback 到 HV30
-                if atm_iv < 0.20 or atm_iv > 3.00:
-                    atm_iv = mstr_data_inner['hv30'] if mstr_data_inner['hv30'] > 0 else 0.85
+                # 如果 IV 明顯低於 HV30（< 70%），強制使用 HV30
+                if atm_iv < hv30 * 0.7:
+                    atm_iv = hv30
+            else:
+                # 完全抓不到合理 IV，直接用 HV30
+                atm_iv = hv30
 
         return atm_iv, pc_ratio, exps[0]
     except:
@@ -136,23 +142,16 @@ def fetch_mstr_options():
 
 @st.cache_data(ttl=60)
 def fetch_beta_mstr_btc():
-    """修正版：改用 pd.concat 對齊日期，解決 Beta = 0 的問題"""
     try:
         mstr = yf.Ticker("MSTR").history(period="3mo", interval="1d")
         btc  = yf.Ticker("BTC-USD").history(period="3mo", interval="1d")
-
-        # 移除時區，只保留日期
         mstr.index = mstr.index.tz_localize(None)
         btc.index  = btc.index.tz_localize(None)
-
         m_ret = mstr['Close'].pct_change().dropna()
         b_ret = btc['Close'].pct_change().dropna()
-
-        # 用 pd.concat 對齊日期
         combined = pd.concat([m_ret, b_ret], axis=1, join='inner').dropna()
         if len(combined) < 10:
             return 0
-
         cov = np.cov(combined.iloc[:, 0], combined.iloc[:, 1])[0][1]
         var = np.var(combined.iloc[:, 1])
         return cov / var if var != 0 else 0
@@ -546,6 +545,7 @@ st.markdown("## 🎯 備兌買權部位監控與平倉策略")
 
 # 編輯模式
 with st.expander("✏️ 編輯部位（新增/修改/停用）"):
+    st.caption("⚠️ net_cash = 這筆合約從開倉至今的歷史淨收入總額（正=淨收，負=淨付）。請根據券商實際數據手動修正。")
     positions = st.session_state["cc_positions"]
     for i, pos in enumerate(positions):
         c1,c2,c3,c4,c5,c6 = st.columns([2,1.2,1.5,1,1.2,0.8])
@@ -586,20 +586,38 @@ if mstr_price > 0 and positions:
         iv_use = atm_iv if atm_iv > 0 else (mstr_data['hv30'] if mstr_data and mstr_data['hv30'] > 0 else 0.85)
         if iv_use <= 0:
             iv_use = 0.85
-        bs_price, delta, theta, prob_itm = bs_call(mstr_price, pos["strike"], T, r_rf, iv_use)
+
+        # 如果 IV 太低（< 50%），代表數據不可靠，B-S 不顯示
+        iv_valid = iv_use >= 0.50
+
+        if iv_valid:
+            bs_price, delta, theta, prob_itm = bs_call(mstr_price, pos["strike"], T, r_rf, iv_use)
+            bs_disp    = f"${bs_price:.2f}"
+            delta_disp = f"{delta:.2f}"
+            prob_disp  = f"{prob_itm*100:.1f}%"
+            theta_disp = f"${theta:.3f}"
+        else:
+            bs_price = delta = theta = prob_itm = 0
+            bs_disp    = "—"
+            delta_disp = "—"
+            prob_disp  = "—"
+            theta_disp = "—"
 
         net_cash    = pos["net_cash"]
-        buyback_est = bs_price * 100 * pos["contracts"]
+        buyback_est = bs_price * 100 * pos["contracts"] if iv_valid else 0
         total_pnl   = net_cash - buyback_est
         pnl_per     = total_pnl / pos["contracts"] if pos["contracts"] > 0 else 0
 
-        if prob_itm > 0.7 or days_left <= 14:
-            urgency = "🔴 緊急"
-            urgent_positions.append(pos)
-        elif prob_itm > 0.4 or days_left <= 30:
-            urgency = "🟡 注意"
+        if iv_valid:
+            if prob_itm > 0.7 or days_left <= 14:
+                urgency = "🔴 緊急"
+                urgent_positions.append(pos)
+            elif prob_itm > 0.4 or days_left <= 30:
+                urgency = "🟡 注意"
+            else:
+                urgency = "🟢 安全"
         else:
-            urgency = "🟢 安全"
+            urgency = "⚠️ IV異常"
 
         rows_cc.append({
             "部位":       pos["label"],
@@ -607,10 +625,10 @@ if mstr_price > 0 and positions:
             "到期":       pos["expiry"],
             "剩餘天數":   f"{days_left}天",
             "口數":       pos["contracts"],
-            "B-S估價":    f"${bs_price:.2f}",
-            "Delta":      f"{delta:.2f}",
-            "被指派機率": f"{prob_itm*100:.1f}%",
-            "Theta/天":   f"${theta:.3f}",
+            "B-S估價":    bs_disp,
+            "Delta":      delta_disp,
+            "被指派機率": prob_disp,
+            "Theta/天":   theta_disp,
             "每口P&L":    f"${pnl_per:+.0f}",
             "總P&L":      f"${total_pnl:+,.0f}",
             "狀態":       urgency,
@@ -619,20 +637,28 @@ if mstr_price > 0 and positions:
     df_cc = pd.DataFrame(rows_cc)
     st.dataframe(df_cc, use_container_width=True, hide_index=True)
 
-    total_buyback = sum(
-        bs_call(mstr_price, p["strike"],
-                max(1,(datetime.strptime(p["expiry"],"%Y-%m-%d")-datetime.now().replace(hour=0,minute=0,second=0,microsecond=0)).days)/365,
-                r_rf, atm_iv if atm_iv > 0 else (mstr_data["hv30"] if mstr_data and mstr_data["hv30"] > 0 else 0.85))[0] * 100 * p["contracts"]
-        for p in positions
-    )
+    # 總覽
+    if atm_iv >= 0.50:
+        total_buyback = sum(
+            bs_call(mstr_price, p["strike"],
+                    max(1,(datetime.strptime(p["expiry"],"%Y-%m-%d")-datetime.now().replace(hour=0,minute=0,second=0,microsecond=0)).days)/365,
+                    r_rf, atm_iv)[0] * 100 * p["contracts"]
+            for p in positions
+        )
+    else:
+        total_buyback = 0
+
     total_net_cash = sum(p["net_cash"] for p in positions)
-    net_pnl_all = total_net_cash - total_buyback
+    net_pnl_all = total_net_cash - total_buyback if total_buyback > 0 else 0
 
     col_a, col_b, col_c = st.columns(3)
-    col_a.metric("全部平倉估算成本", f"${total_buyback:,.0f}")
+    col_a.metric("全部平倉估算成本", f"${total_buyback:,.0f}" if total_buyback > 0 else "—")
     col_b.metric("這批合約歷史淨收入", f"${total_net_cash:,.0f}")
-    col_c.metric("淨損益（正=獲利）", f"${net_pnl_all:+,.0f}",
-                 delta="獲利" if net_pnl_all >= 0 else "虧損")
+    col_c.metric("淨損益（正=獲利）", f"${net_pnl_all:+,.0f}" if total_buyback > 0 else "—",
+                 delta="獲利" if net_pnl_all >= 0 else "虧損" if total_buyback > 0 else "")
+
+    if atm_iv < 0.50:
+        st.warning("⚠️ 當前 IV 數據異常（< 50%），B-S 估價與損益計算暫停。請等待下個交易日開盤後，或手動檢查 IV 來源。")
 
     # ==========================================
     # 期權指標解釋定義
@@ -700,12 +726,14 @@ if mstr_price > 0 and positions:
 
         iv_use = atm_iv if atm_iv > 0 else (mstr_data["hv30"] if mstr_data and mstr_data["hv30"] > 0 else 0.85)
         if iv_use <= 0: iv_use = 0.85
-        bs_price, delta, theta, prob_itm = bs_call(mstr_price, pos["strike"], T, r_rf, iv_use)
-        buyback_est = bs_price * 100 * pos["contracts"]
-        total_pnl   = pos["net_cash"] - buyback_est
 
-        if days_left <= 21 or prob_itm > 0.6:
-            st.markdown(f"""
+        if iv_use >= 0.50:
+            bs_price, delta, theta, prob_itm = bs_call(mstr_price, pos["strike"], T, r_rf, iv_use)
+            buyback_est = bs_price * 100 * pos["contracts"]
+            total_pnl   = pos["net_cash"] - buyback_est
+
+            if days_left <= 21 or prob_itm > 0.6:
+                st.markdown(f"""
 <div style="background:#2d1517;border-left:4px solid #da3633;border-radius:6px;padding:14px;margin-bottom:10px;">
 <div style="font-size:13px;font-weight:700;color:#da3633;">🚨 【立即處理】{pos["label"]} — 剩 {days_left} 天，被指派機率 {prob_itm*100:.1f}%</div>
 <div style="font-size:12px;color:#c9d1d9;margin-top:8px;line-height:1.7;">
@@ -719,8 +747,8 @@ if mstr_price > 0 and positions:
 </div>
 </div>""", unsafe_allow_html=True)
 
-        elif prob_itm > 0.35:
-            st.markdown(f"""
+            elif prob_itm > 0.35:
+                st.markdown(f"""
 <div style="background:#1c1f26;border-left:4px solid #f0883e;border-radius:6px;padding:14px;margin-bottom:10px;">
 <div style="font-size:13px;font-weight:700;color:#f0883e;">⚠️ 【持續監控】{pos["label"]} — 被指派機率 {prob_itm*100:.1f}%，剩 {days_left} 天</div>
 <div style="font-size:12px;color:#c9d1d9;margin-top:8px;line-height:1.7;">
@@ -728,12 +756,20 @@ if mstr_price > 0 and positions:
 建議：若股價持續上漲接近 ${pos["strike"]:.0f}，提前評估 Roll Up & Out；若股價回落，等待 Theta 侵蝕後再決策。
 </div>
 </div>""", unsafe_allow_html=True)
-        else:
-            st.markdown(f"""
+            else:
+                st.markdown(f"""
 <div style="background:#0d2818;border-left:4px solid #238636;border-radius:6px;padding:14px;margin-bottom:10px;">
 <div style="font-size:13px;font-weight:700;color:#238636;">✅ 【安全觀察】{pos["label"]} — 被指派機率 {prob_itm*100:.1f}%，剩 {days_left} 天</div>
 <div style="font-size:12px;color:#c9d1d9;margin-top:8px;">
 Theta 每天衰減 ${abs(theta):.3f}，時間對賣方有利。繼續持有，每日損益：+${abs(theta)*100*pos["contracts"]:.0f}（{pos["contracts"]}口Theta收益）。
+</div>
+</div>""", unsafe_allow_html=True)
+        else:
+            st.markdown(f"""
+<div style="background:#1c1f26;border-left:4px solid #6e7681;border-radius:6px;padding:14px;margin-bottom:10px;">
+<div style="font-size:13px;font-weight:700;color:#8b949e;">⚠️ 【IV 數據異常】{pos["label"]} — 暫停風險評估</div>
+<div style="font-size:12px;color:#c9d1d9;margin-top:8px;">
+當前抓到的 IV 過低（< 50%），無法進行可靠的 B-S 計算。請等待下個交易日開盤後刷新頁面。
 </div>
 </div>""", unsafe_allow_html=True)
 
