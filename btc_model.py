@@ -40,15 +40,15 @@ def save_params():
 
 # ── 備兌買權部位 Session State ──────────────────────────
 CC_POSITIONS_DEFAULT = [
-    # MSTR 部位（依到期日排序）
-    {"id": 1, "label": "MSTR Sep'26 $155", "strike": 155.0, "expiry": "2026-09-25", "contracts": 2,  "avg_cost": 4.75,  "ticker": "MSTR", "active": True},
-    {"id": 2, "label": "MSTR Nov'26 $160", "strike": 160.0, "expiry": "2026-11-20", "contracts": 6,  "avg_cost": 13.99, "ticker": "MSTR", "active": True},
-    {"id": 3, "label": "MSTR Dec'26 $190", "strike": 190.0, "expiry": "2026-12-18", "contracts": 1,  "avg_cost": 5.17,  "ticker": "MSTR", "active": True},
-    {"id": 4, "label": "MSTR Dec'26 $195", "strike": 195.0, "expiry": "2026-12-18", "contracts": 1,  "avg_cost": 8.58,  "ticker": "MSTR", "active": True},
-    {"id": 5, "label": "MSTR Jan'27 $190", "strike": 190.0, "expiry": "2027-01-15", "contracts": 1,  "avg_cost": 9.85,  "ticker": "MSTR", "active": True},
-    {"id": 6, "label": "MSTR Jan'27 $195", "strike": 195.0, "expiry": "2027-01-15", "contracts": 20, "avg_cost": 6.79,  "ticker": "MSTR", "active": True},
-    # COIN 部位
-    {"id": 7, "label": "COIN Nov'26 $210", "strike": 210.0, "expiry": "2026-11-20", "contracts": 3,  "avg_cost": 19.77, "ticker": "COIN", "active": True},
+    # MSTR 現有持倉（依到期日排序）
+    {"id": 1, "label": "MSTR Sep25'26 $155", "strike": 155.0, "expiry": "2026-09-25", "contracts": 2,  "avg_cost": 4.75,  "ticker": "MSTR", "active": True},
+    {"id": 2, "label": "MSTR Nov20'26 $160", "strike": 160.0, "expiry": "2026-11-20", "contracts": 6,  "avg_cost": 13.99, "ticker": "MSTR", "active": True},
+    {"id": 3, "label": "MSTR Dec18'26 $190", "strike": 190.0, "expiry": "2026-12-18", "contracts": 1,  "avg_cost": 5.17,  "ticker": "MSTR", "active": True},
+    {"id": 4, "label": "MSTR Dec18'26 $195", "strike": 195.0, "expiry": "2026-12-18", "contracts": 1,  "avg_cost": 8.58,  "ticker": "MSTR", "active": True},
+    {"id": 5, "label": "MSTR Jan15'27 $190", "strike": 190.0, "expiry": "2027-01-15", "contracts": 1,  "avg_cost": 9.85,  "ticker": "MSTR", "active": True},
+    {"id": 6, "label": "MSTR Jan15'27 $195", "strike": 195.0, "expiry": "2027-01-15", "contracts": 20, "avg_cost": 6.79,  "ticker": "MSTR", "active": True},
+    # COIN 現有持倉
+    {"id": 7, "label": "COIN Nov20'26 $210", "strike": 210.0, "expiry": "2026-11-20", "contracts": 3,  "avg_cost": 19.77, "ticker": "COIN", "active": True},
 ]
 if "cc_positions" not in st.session_state:
     st.session_state["cc_positions"] = CC_POSITIONS_DEFAULT
