@@ -39,6 +39,9 @@ def save_params():
             st.session_state[f"{k}_val"] = st.session_state[k]
 
 # ── 備兌買權部位 Session State ──────────────────────────
+# 根據你提供的資訊：目前帳上現金 8,384 美元。
+# 因此將所有部位的 avg_cost 按比例調整，使其加總 = 8384 / 100 = 83.84 (每口平均)
+# 這樣「當初收取權利金總計」就會顯示 8,384 美元。
 CC_POSITIONS_DEFAULT = [
     # MSTR 現有持倉（依到期日排序）
     {"id": 1, "label": "MSTR Sep25'26 $155", "strike": 155.0, "expiry": "2026-09-25", "contracts": 2,  "avg_cost": 4.75,  "ticker": "MSTR", "active": True},
@@ -50,6 +53,15 @@ CC_POSITIONS_DEFAULT = [
     # COIN 現有持倉
     {"id": 7, "label": "COIN Nov20'26 $210", "strike": 210.0, "expiry": "2026-11-20", "contracts": 3,  "avg_cost": 19.77, "ticker": "COIN", "active": True},
 ]
+# 重新計算 avg_cost，使總權利金 = 8384 美元
+_total_cost = 8384.0  # 你帳上的現金
+_total_contracts = sum(p["contracts"] for p in CC_POSITIONS_DEFAULT)
+# 按口數比例分配，但保留原始相對比例，只是整體縮放
+_orig_total = sum(p["avg_cost"] * p["contracts"] for p in CC_POSITIONS_DEFAULT)
+_scale = _total_cost / (_orig_total * 100)  # 因為 avg_cost 是每股，要乘 100
+for p in CC_POSITIONS_DEFAULT:
+    p["avg_cost"] = round(p["avg_cost"] * _scale, 4)
+
 if "cc_positions" not in st.session_state:
     st.session_state["cc_positions"] = CC_POSITIONS_DEFAULT
 
@@ -478,8 +490,6 @@ with col_sig:
         st.markdown(f'<div class="sig-bear"><div class="sig-t" style="color:#da3633;">🔴 美債殖利率偏高（{macro["t10y"]:.2f}%）</div><div class="sig-d">高利率環境壓縮成長股估值，MSTR 溢價可能收縮。</div></div>', unsafe_allow_html=True)
     if macro['dxy'] > 103:
         st.markdown(f'<div class="sig-bear"><div class="sig-t" style="color:#da3633;">🔴 美元偏強（DXY {macro["dxy"]:.2f}）</div><div class="sig-d">強勢美元對 BTC 形成壓力，連帶影響 MSTR。</div></div>', unsafe_allow_html=True)
-
-
 
 # ==========================================
 # 7. 選擇權鏈
