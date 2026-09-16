@@ -23,11 +23,11 @@ TAIPEI_TZ = ZoneInfo("Asia/Taipei")
 DEFAULTS = {
     "MSTR_BTC_HOLDINGS":   845050,
     "MSTR_AVG_COST":       75412,
-    "MSTR_BASIC_SHARES":   420483000,
+    "MSTR_BASIC_SHARES":   420497000,  # 更新：基本流通股數 420,497,000
     "MSTR_TOTAL_DEBT_M":   6714,
-    "MSTR_TOTAL_PREF_M":   14625,
-    "MSTR_CASH_RESERVE_M": 6538,
-    "MSTR_FDSO":           424479000,
+    "MSTR_TOTAL_PREF_M":   14481,      # 更新：優先股 14,481M
+    "MSTR_CASH_RESERVE_M": 6398,       # 更新：現金 6,398M
+    "MSTR_FDSO":           424501000,  # 更新：完全稀釋股數 424,501,000
 }
 for k, v in DEFAULTS.items():
     if f"{k}_val" not in st.session_state:
