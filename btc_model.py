@@ -209,8 +209,8 @@ with st.sidebar:
         key="MSTR_AVG_COST", on_change=save_params)
 
     st.markdown("---")
-    st.markdown("**官方 mNAV 參數**")
-    st.caption("mNAV = 股價 ÷ Net BPS（官方定義）")
+    st.markdown("**官方 mNAV 參數（FDSO 口徑）**")
+    st.caption("mNAV = 股價 ÷ Net BPS (USD)｜Net BPS = Net BTC ÷ FDSO × BTC 價格")
     MSTR_BASIC_SHARES = st.number_input("基本流通股數 (Basic)",
         value=st.session_state["MSTR_BASIC_SHARES_val"], step=1000000,
         key="MSTR_BASIC_SHARES", on_change=save_params)
@@ -220,13 +220,13 @@ with st.sidebar:
     MSTR_TOTAL_PREF_M = st.number_input("優先股 Total Pref (百萬$)",
         value=st.session_state["MSTR_TOTAL_PREF_M_val"], step=100,
         key="MSTR_TOTAL_PREF_M", on_change=save_params)
-    MSTR_CASH_RESERVE_M = st.number_input("現金儲備 USD Cash (百萬$)",
+    MSTR_CASH_RESERVE_M = st.number_input("USD Assets (百萬$)",
         value=st.session_state["MSTR_CASH_RESERVE_M_val"], step=100,
         key="MSTR_CASH_RESERVE_M", on_change=save_params)
 
     st.markdown("---")
-    st.markdown("**CEBE mNAV 參數**")
-    st.caption("用 FDSO（價內稀釋股數）最貼近官方")
+    st.markdown("**FDSO（完全稀釋股數）**")
+    st.caption("用於官方 mNAV 計算")
     MSTR_FDSO = st.number_input("完全稀釋股數 FDSO",
         value=st.session_state["MSTR_FDSO_val"], step=1000000,
         key="MSTR_FDSO", on_change=save_params)
@@ -244,30 +244,28 @@ with st.sidebar:
     atm_iv, pc_ratio, next_exp = fetch_mstr_options()
 
     if btc_price > 0 and mstr_price > 0:
-        # ── 官方 mNAV 計算（完全對齊 MSTR 官方定義）────────
-        # 公式：mNAV = 股價 ÷ Net BPS (USD)
-        # Net BTC = BTC 持倉 − 債務 − 優先股 + USD Assets
+        # ── 官方 mNAV 計算（FDSO 口徑）────────────────────
         usd_assets_m        = MSTR_CASH_RESERVE_M
         net_btc             = MSTR_BTC_HOLDINGS - (MSTR_TOTAL_DEBT_M + MSTR_TOTAL_PREF_M - usd_assets_m) * 1e6 / btc_price
         net_bps_usd         = (net_btc / MSTR_FDSO) * btc_price if MSTR_FDSO > 0 else 0
         official_mnav       = mstr_price / net_bps_usd if net_bps_usd > 0 else 0
 
+        # ── Basic mNAV 計算（Basic Shares 口徑）────────────
+        net_bps_basic_usd   = (net_btc / MSTR_BASIC_SHARES) * btc_price if MSTR_BASIC_SHARES > 0 else 0
+        basic_mnav          = mstr_price / net_bps_basic_usd if net_bps_basic_usd > 0 else 0
+
         # 輔助顯示用
         btc_reserve_m       = btc_price * MSTR_BTC_HOLDINGS / 1e6
         net_reserve_m       = btc_reserve_m + usd_assets_m - MSTR_TOTAL_DEBT_M - MSTR_TOTAL_PREF_M
-
-        # ── CEBE mNAV 計算（保持不變）────────────────────
         net_claims_m        = MSTR_TOTAL_DEBT_M + MSTR_TOTAL_PREF_M - MSTR_CASH_RESERVE_M
         claims_btc          = net_claims_m * 1e6 / btc_price
         common_equity_btc   = MSTR_BTC_HOLDINGS - claims_btc
-        cebe_sats           = int(common_equity_btc / MSTR_FDSO * 1e8) if MSTR_FDSO > 0 else 0
+        net_bps_sats        = int(net_btc / MSTR_FDSO * 1e8) if MSTR_FDSO > 0 else 0
         drag_pct            = claims_btc / MSTR_BTC_HOLDINGS * 100
-        cebe_per_share      = cebe_sats / 1e8 * btc_price
-        cebe_mnav           = mstr_price / cebe_per_share if cebe_per_share > 0 else 0
     else:
-        official_mnav = cebe_mnav = cebe_sats = drag_pct = cebe_per_share = 0
-        btc_reserve_m = net_reserve_m = net_btc = net_bps_usd = 0
-        net_claims_m = claims_btc = common_equity_btc = 0
+        official_mnav = basic_mnav = net_bps_usd = net_bps_basic_usd = 0
+        btc_reserve_m = net_reserve_m = net_btc = 0
+        net_claims_m = claims_btc = common_equity_btc = net_bps_sats = drag_pct = 0
 
     if btc_price > 0:
         pnl_usd   = (btc_price - MSTR_AVG_COST) * MSTR_BTC_HOLDINGS
@@ -277,35 +275,39 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("### 📈 即時 mNAV")
     oc = "#f3ba2f" if official_mnav >= 1 else "#0ecb81"
-    cc = "#f3ba2f" if cebe_mnav >= 1 else "#0ecb81"
+    bc = "#f3ba2f" if basic_mnav >= 1 else "#0ecb81"
     st.markdown(f"""
         <div style="background:#181a20;border:1px solid #2b3139;border-radius:8px;padding:12px;margin-bottom:8px;">
-            <div style="font-size:10px;color:#848e9c;">🏛️ 官方 mNAV（官方定義）</div>
+            <div style="font-size:10px;color:#848e9c;">🏛️ 官方 mNAV（FDSO 口徑）</div>
             <div style="font-size:24px;font-weight:800;color:{oc};font-family:monospace;">{official_mnav:.3f}x</div>
             <div style="font-size:10px;color:#848e9c;">股價 ${mstr_price:.2f} ÷ Net BPS ${net_bps_usd:.2f}</div>
         </div>
         <div style="background:#181a20;border:1px solid #2b3139;border-radius:8px;padding:12px;margin-bottom:8px;">
-            <div style="font-size:10px;color:#848e9c;">🔬 CEBE mNAV（普通股真實溢價）</div>
-            <div style="font-size:24px;font-weight:800;color:{cc};font-family:monospace;">{cebe_mnav:.3f}x</div>
-            <div style="font-size:10px;color:#848e9c;">股價 ${mstr_price:.2f} ÷ CEBE ${cebe_per_share:.2f}（{cebe_sats:,} sats）</div>
-            <div style="font-size:10px;color:#f6465d;">Drag = {drag_pct:.1f}%</div>
+            <div style="font-size:10px;color:#848e9c;">🔬 Basic mNAV（基本流通股口徑）</div>
+            <div style="font-size:24px;font-weight:800;color:{bc};font-family:monospace;">{basic_mnav:.3f}x</div>
+            <div style="font-size:10px;color:#848e9c;">股價 ${mstr_price:.2f} ÷ Basic BPS ${net_bps_basic_usd:.2f}</div>
+            <div style="font-size:10px;color:#f6465d;">反身性風險警示：Basic mNAV 越低，越接近 1.0 警戒線</div>
         </div>
     """, unsafe_allow_html=True)
 
-    with st.expander("💡 什麼是 CEBE？"):
+    with st.expander("💡 官方 mNAV 的定義"):
         st.markdown(f"""
-**CEBE = Claim-Encumbered Bitcoin Equivalent**
-被債權人索償權壓著的比特幣等值。
+**官方 mNAV = 股價 ÷ Net BPS (USD)**
 
-**官方計算步驟：**
-1. 淨索償額 = Debt + Pref - Cash = **${net_claims_m/1000:.2f}B**
-2. 換算成 BTC = **{claims_btc:,.0f} BTC**
-3. 普通股BTC = {MSTR_BTC_HOLDINGS:,} - {claims_btc:,.0f} = **{common_equity_btc:,.0f} BTC**
-4. 每股CEBE = **{cebe_sats:,} sats**
-5. Drag = {claims_btc:,.0f} / {MSTR_BTC_HOLDINGS:,} = **{drag_pct:.1f}%**
+**計算步驟：**
+1. Net BTC = BTC 持倉 − 債務 − 優先股 + USD Assets
+2. Net BPS (USD) = (Net BTC ÷ FDSO) × BTC 價格
+3. mNAV = 股價 ÷ Net BPS (USD)
 
-CEBE mNAV > 1 → 發新股對股東仍有利
-CEBE mNAV < 1 → 繼續發股會稀釋股東
+**當前數字：**
+- Net BTC = **{net_btc:,.0f} BTC**
+- Net BPS (FDSO) = **{net_bps_usd:.2f} USD**
+- Net BPS (Basic) = **{net_bps_basic_usd:.2f} USD**
+- Drag = **{drag_pct:.1f}%**
+
+**FDSO vs Basic：**
+- **FDSO 口徑**：與 MSTR 官方一致，適合牛市評估溢價空間
+- **Basic 口徑**：更低、更保守，適合警示反身性風險
 """)
 
 # ==========================================
@@ -470,13 +472,19 @@ with col_sig:
         else:
             st.markdown(f'<div class="sig-neut"><div class="sig-t" style="color:#8b949e;">⚪ P/C Ratio 中性（{pc_ratio:.2f}）</div><div class="sig-d">多空情緒平衡。</div></div>', unsafe_allow_html=True)
 
-    if cebe_mnav > 0:
-        if cebe_mnav > 1.5:
-            st.markdown(f'<div class="sig-bear"><div class="sig-t" style="color:#da3633;">🔴 CEBE mNAV 偏高（{cebe_mnav:.3f}x）</div><div class="sig-d">股價溢價過高，泡沫風險上升，備兌買權履約價可積極設近。</div></div>', unsafe_allow_html=True)
-        elif cebe_mnav < 1.05:
-            st.markdown(f'<div class="sig-bull"><div class="sig-t" style="color:#238636;">🟢 CEBE mNAV 接近清算價值（{cebe_mnav:.3f}x）</div><div class="sig-d">股價接近每股真實BTC淨值，市場定價清算風險，歷史上為優質買點。</div></div>', unsafe_allow_html=True)
+    if official_mnav > 0:
+        if official_mnav > 1.5:
+            st.markdown(f'<div class="sig-bear"><div class="sig-t" style="color:#da3633;">🔴 官方 mNAV 偏高（{official_mnav:.3f}x）</div><div class="sig-d">股價溢價過高，泡沫風險上升，備兌買權履約價可積極設近。</div></div>', unsafe_allow_html=True)
+        elif official_mnav < 1.05:
+            st.markdown(f'<div class="sig-bull"><div class="sig-t" style="color:#238636;">🟢 官方 mNAV 接近清算價值（{official_mnav:.3f}x）</div><div class="sig-d">股價接近每股真實BTC淨值，市場定價清算風險，歷史上為優質買點。</div></div>', unsafe_allow_html=True)
         else:
-            st.markdown(f'<div class="sig-neut"><div class="sig-t" style="color:#8b949e;">⚪ CEBE mNAV 正常（{cebe_mnav:.3f}x）</div><div class="sig-d">溢價在合理區間，持續監控。</div></div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="sig-neut"><div class="sig-t" style="color:#8b949e;">⚪ 官方 mNAV 正常（{official_mnav:.3f}x）</div><div class="sig-d">溢價在合理區間，持續監控。</div></div>', unsafe_allow_html=True)
+
+    if basic_mnav > 0:
+        if basic_mnav < 1.05:
+            st.markdown(f'<div class="sig-bear"><div class="sig-t" style="color:#da3633;">🔴 Basic mNAV 接近 1.0（{basic_mnav:.3f}x）</div><div class="sig-d">反身性風險警示：當前股東處境已接近清算價值，發股將稀釋每股含金量。</div></div>', unsafe_allow_html=True)
+        elif basic_mnav < 1.15:
+            st.markdown(f'<div class="sig-neut"><div class="sig-t" style="color:#f0883e;">🟡 Basic mNAV 偏低（{basic_mnav:.3f}x）</div><div class="sig-d">溢價空間收窄，需留意反身性風險。</div></div>', unsafe_allow_html=True)
 
     if macro['t10y'] > 4.5:
         st.markdown(f'<div class="sig-bear"><div class="sig-t" style="color:#da3633;">🔴 美債殖利率偏高（{macro["t10y"]:.2f}%）</div><div class="sig-d">高利率環境壓縮成長股估值，MSTR 溢價可能收縮。</div></div>', unsafe_allow_html=True)
@@ -799,32 +807,32 @@ Theta 每天衰減 ${abs(theta):.3f}，時間對賣方有利。繼續持有，�
 """)
 
 # ==========================================
-# 8. CEBE 壓力測試模擬表（40k~200k，每1萬一級）
+# 8. 官方 mNAV 壓力測試模擬表（50k~200k，每1萬一級）
 # ==========================================
 st.markdown("---")
-st.subheader("📊 MSTR CEBE 股價真實價值壓力測試模擬")
-st.markdown(f"基於 **{MSTR_BTC_HOLDINGS:,} BTC** 持倉，官方 CEBE 計算法（BTC數量口徑），模擬 BTC $40,000 ~ $200,000 每股真實淨值區間：")
+st.subheader("📊 MSTR 官方 mNAV 股價真實價值壓力測試模擬")
+st.markdown(f"基於 **{MSTR_BTC_HOLDINGS:,} BTC** 持倉，官方 mNAV 計算法（FDSO 口徑），模擬 BTC $50,000 ~ $200,000 每股真實淨值區間：")
 
-sim_prices = list(range(40000, 200001, 10000))
+sim_prices = list(range(50000, 200001, 10000))
 rows = []
 for p in sim_prices:
-    sim_claims_btc    = (MSTR_TOTAL_DEBT_M + MSTR_TOTAL_PREF_M - MSTR_CASH_RESERVE_M) * 1e6 / p
-    sim_common_btc    = MSTR_BTC_HOLDINGS - sim_claims_btc
-    sim_cebe_sats     = sim_common_btc / MSTR_FDSO * 1e8 if MSTR_FDSO > 0 else 0
-    sim_cebe_usd      = sim_cebe_sats / 1e8 * p
-    sim_drag          = sim_claims_btc / MSTR_BTC_HOLDINGS * 100
+    # 官方 mNAV 公式
+    sim_net_btc     = MSTR_BTC_HOLDINGS - (MSTR_TOTAL_DEBT_M + MSTR_TOTAL_PREF_M - MSTR_CASH_RESERVE_M) * 1e6 / p
+    sim_net_bps_usd = (sim_net_btc / MSTR_FDSO) * p if MSTR_FDSO > 0 else 0
+    sim_net_bps_sats = sim_net_btc / MSTR_FDSO * 1e8 if MSTR_FDSO > 0 else 0
+    sim_drag        = (MSTR_TOTAL_DEBT_M + MSTR_TOTAL_PREF_M - MSTR_CASH_RESERVE_M) * 1e6 / p / MSTR_BTC_HOLDINGS * 100
     rows.append({
         "BTC 模擬價格":            f"${p:,.0f}",
-        "每股 CEBE（sats）":       f"{sim_cebe_sats:,.0f}",
-        "每股 CEBE（USD）":        f"${sim_cebe_usd:,.2f}",
+        "每股 Net BPS（sats）":    f"{sim_net_bps_sats:,.0f}",
+        "每股 Net BPS（USD）":     f"${sim_net_bps_usd:,.2f}",
         "Drag（債務侵蝕率）":       f"{sim_drag:.1f}%",
-        "1.0x 清算價值":           f"${sim_cebe_usd * 1.0:,.2f}",
-        "1.1x":                    f"${sim_cebe_usd * 1.1:,.2f}",
-        "1.2x 合理防線":           f"${sim_cebe_usd * 1.2:,.2f}",
-        "1.3x":                    f"${sim_cebe_usd * 1.3:,.2f}",
-        "1.4x":                    f"${sim_cebe_usd * 1.4:,.2f}",
-        "1.5x":                    f"${sim_cebe_usd * 1.5:,.2f}",
-        "1.6x 泡沫警戒":           f"${sim_cebe_usd * 1.6:,.2f}",
+        "1.0x 清算價值":           f"${sim_net_bps_usd * 1.0:,.2f}",
+        "1.1x":                    f"${sim_net_bps_usd * 1.1:,.2f}",
+        "1.2x 合理防線":           f"${sim_net_bps_usd * 1.2:,.2f}",
+        "1.3x":                    f"${sim_net_bps_usd * 1.3:,.2f}",
+        "1.4x":                    f"${sim_net_bps_usd * 1.4:,.2f}",
+        "1.5x":                    f"${sim_net_bps_usd * 1.5:,.2f}",
+        "1.6x 泡沫警戒":           f"${sim_net_bps_usd * 1.6:,.2f}",
     })
 
 st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
@@ -833,8 +841,8 @@ st.markdown("""
 <div style="background:#181a20;border:1px solid #2b3139;border-radius:8px;padding:16px;margin:12px 0;">
     <p style="color:#fff;font-size:13px;font-weight:bold;margin-bottom:10px;">💡 如何解讀此表？</p>
     <ul style="color:#fff;font-size:12px;line-height:1.7;padding-left:18px;">
-        <li><b>每股 CEBE sats</b>：不受 BTC 價格影響，是衡量每股含金量的穩定指標，越高越好。</li>
-        <li><b>每股 CEBE USD</b>：真實清算價值，股價應在此基礎上給予溢價。</li>
+        <li><b>每股 Net BPS（sats）</b>：不受 BTC 價格影響，是衡量每股含金量的穩定指標，越高越好。</li>
+        <li><b>每股 Net BPS（USD）</b>：真實清算價值，股價應在此基礎上給予溢價。</li>
         <li><b>Drag</b>：BTC 越漲，侵蝕率越低，普通股股東受益越多。</li>
         <li><b>1.0x</b>：清算警戒線，股價跌到此處代表市場開始定價清算風險。</li>
         <li><b>1.2x</b>：歷史合理防線，左側抄底參考點。</li>
