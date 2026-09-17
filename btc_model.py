@@ -210,7 +210,7 @@ with st.sidebar:
 
     st.markdown("---")
     st.markdown("**官方 mNAV 參數**")
-    st.caption("EV = 基本市值 + 債務 + 優先股 − 現金")
+    st.caption("mNAV = 股價 ÷ Net BPS（官方定義）")
     MSTR_BASIC_SHARES = st.number_input("基本流通股數 (Basic)",
         value=st.session_state["MSTR_BASIC_SHARES_val"], step=1000000,
         key="MSTR_BASIC_SHARES", on_change=save_params)
@@ -245,12 +245,16 @@ with st.sidebar:
 
     if btc_price > 0 and mstr_price > 0:
         # ── 官方 mNAV 計算（完全對齊 MSTR 官方定義）────────
-        btc_reserve_m       = btc_price * MSTR_BTC_HOLDINGS / 1e6        # BTC 儲備
-        basic_mktcap_m      = mstr_price * MSTR_BASIC_SHARES / 1e6        # 基本市值
-        ev_m                = basic_mktcap_m + MSTR_TOTAL_DEBT_M + MSTR_TOTAL_PREF_M - MSTR_CASH_RESERVE_M
-        # 官方淨儲備 = BTC 儲備 + 現金 − 債務 − 優先股
-        net_reserve_m       = btc_reserve_m + MSTR_CASH_RESERVE_M - MSTR_TOTAL_DEBT_M - MSTR_TOTAL_PREF_M
-        official_mnav       = ev_m / net_reserve_m if net_reserve_m > 0 else 0
+        # 公式：mNAV = 股價 ÷ Net BPS (USD)
+        # Net BTC = BTC 持倉 − 債務 − 優先股 + USD Assets
+        usd_assets_m        = MSTR_CASH_RESERVE_M
+        net_btc             = MSTR_BTC_HOLDINGS - (MSTR_TOTAL_DEBT_M + MSTR_TOTAL_PREF_M - usd_assets_m) * 1e6 / btc_price
+        net_bps_usd         = (net_btc / MSTR_FDSO) * btc_price if MSTR_FDSO > 0 else 0
+        official_mnav       = mstr_price / net_bps_usd if net_bps_usd > 0 else 0
+
+        # 輔助顯示用
+        btc_reserve_m       = btc_price * MSTR_BTC_HOLDINGS / 1e6
+        net_reserve_m       = btc_reserve_m + usd_assets_m - MSTR_TOTAL_DEBT_M - MSTR_TOTAL_PREF_M
 
         # ── CEBE mNAV 計算（保持不變）────────────────────
         net_claims_m        = MSTR_TOTAL_DEBT_M + MSTR_TOTAL_PREF_M - MSTR_CASH_RESERVE_M
@@ -262,7 +266,8 @@ with st.sidebar:
         cebe_mnav           = mstr_price / cebe_per_share if cebe_per_share > 0 else 0
     else:
         official_mnav = cebe_mnav = cebe_sats = drag_pct = cebe_per_share = 0
-        btc_reserve_m = basic_mktcap_m = ev_m = net_reserve_m = net_claims_m = claims_btc = common_equity_btc = 0
+        btc_reserve_m = net_reserve_m = net_btc = net_bps_usd = 0
+        net_claims_m = claims_btc = common_equity_btc = 0
 
     if btc_price > 0:
         pnl_usd   = (btc_price - MSTR_AVG_COST) * MSTR_BTC_HOLDINGS
@@ -275,9 +280,9 @@ with st.sidebar:
     cc = "#f3ba2f" if cebe_mnav >= 1 else "#0ecb81"
     st.markdown(f"""
         <div style="background:#181a20;border:1px solid #2b3139;border-radius:8px;padding:12px;margin-bottom:8px;">
-            <div style="font-size:10px;color:#848e9c;">🏛️ 官方 mNAV（EV口徑）</div>
+            <div style="font-size:10px;color:#848e9c;">🏛️ 官方 mNAV（官方定義）</div>
             <div style="font-size:24px;font-weight:800;color:{oc};font-family:monospace;">{official_mnav:.3f}x</div>
-            <div style="font-size:10px;color:#848e9c;">EV ${ev_m/1000:.2f}B ÷ 淨儲備 ${net_reserve_m/1000:.2f}B</div>
+            <div style="font-size:10px;color:#848e9c;">股價 ${mstr_price:.2f} ÷ Net BPS ${net_bps_usd:.2f}</div>
         </div>
         <div style="background:#181a20;border:1px solid #2b3139;border-radius:8px;padding:12px;margin-bottom:8px;">
             <div style="font-size:10px;color:#848e9c;">🔬 CEBE mNAV（普通股真實溢價）</div>
