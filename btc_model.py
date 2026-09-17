@@ -23,11 +23,11 @@ TAIPEI_TZ = ZoneInfo("Asia/Taipei")
 DEFAULTS = {
     "MSTR_BTC_HOLDINGS":   845050,
     "MSTR_AVG_COST":       75412,
-    "MSTR_BASIC_SHARES":   420497000,  # 更新：基本流通股數 420,497,000
+    "MSTR_BASIC_SHARES":   420497000,
     "MSTR_TOTAL_DEBT_M":   6714,
-    "MSTR_TOTAL_PREF_M":   14481,      # 更新：優先股 14,481M
-    "MSTR_CASH_RESERVE_M": 6398,       # 更新：現金 6,398M
-    "MSTR_FDSO":           424501000,  # 更新：完全稀釋股數 424,501,000
+    "MSTR_TOTAL_PREF_M":   14481,
+    "MSTR_CASH_RESERVE_M": 6398,
+    "MSTR_FDSO":           424501000,
 }
 for k, v in DEFAULTS.items():
     if f"{k}_val" not in st.session_state:
@@ -39,8 +39,6 @@ def save_params():
             st.session_state[f"{k}_val"] = st.session_state[k]
 
 # ── 備兌買權部位 Session State ──────────────────────────
-# ⚠️ net_cash = 這筆合約從開倉至今的「歷史淨收入總額」（正=淨收，負=淨付）
-# ⚠️ 請手動修正為你真實的數字！總和應等於你帳上的現金（例如 8,384 美元）
 CC_POSITIONS_DEFAULT = [
     {"id": 1, "label": "MSTR Sep25'26 $155", "strike": 155.0, "expiry": "2026-09-25", "contracts": 2,  "net_cash": 400.0,  "ticker": "MSTR", "active": True},
     {"id": 2, "label": "MSTR Nov20'26 $160", "strike": 160.0, "expiry": "2026-11-20", "contracts": 6,  "net_cash": 1600.0, "ticker": "MSTR", "active": True},
@@ -50,7 +48,6 @@ CC_POSITIONS_DEFAULT = [
     {"id": 6, "label": "MSTR Jan15'27 $195", "strike": 195.0, "expiry": "2027-01-15", "contracts": 20, "net_cash": 4000.0, "ticker": "MSTR", "active": True},
     {"id": 7, "label": "COIN Nov20'26 $210", "strike": 210.0, "expiry": "2026-11-20", "contracts": 3,  "net_cash": 1084.0, "ticker": "COIN", "active": True},
 ]
-# 註：以上 net_cash 總和 = 8384，是按口數比例分配給你的。請根據券商實際數據手動修正。
 if "cc_positions" not in st.session_state:
     st.session_state["cc_positions"] = CC_POSITIONS_DEFAULT
 
@@ -103,7 +100,6 @@ def fetch_mstr_data():
 
 @st.cache_data(ttl=60)
 def fetch_mstr_options():
-    """最終修正版：嚴格過濾 IV，並加入 IV/HV 合理性檢查"""
     try:
         mstr = yf.Ticker("MSTR")
         exps = mstr.options
@@ -120,7 +116,6 @@ def fetch_mstr_options():
             p = mstr_data_inner['price']
             hv30 = mstr_data_inner['hv30'] if mstr_data_inner['hv30'] > 0 else 0.85
 
-            # 嚴格過濾：只接受 IV 在 50% ~ 300% 之間的合約
             calls_v = calls[(calls['impliedVolatility'] > 0.50) &
                             (calls['impliedVolatility'] < 3.00)].copy()
 
@@ -128,12 +123,9 @@ def fetch_mstr_options():
                 calls_v['dist'] = abs(calls_v['strike'] - p)
                 near_atm = calls_v.sort_values('dist').head(5)
                 atm_iv = float(near_atm['impliedVolatility'].median())
-
-                # 如果 IV 明顯低於 HV30（< 70%），強制使用 HV30
                 if atm_iv < hv30 * 0.7:
                     atm_iv = hv30
             else:
-                # 完全抓不到合理 IV，直接用 HV30
                 atm_iv = hv30
 
         return atm_iv, pc_ratio, exps[0]
@@ -252,10 +244,15 @@ with st.sidebar:
     atm_iv, pc_ratio, next_exp = fetch_mstr_options()
 
     if btc_price > 0 and mstr_price > 0:
-        btc_reserve_m       = btc_price * MSTR_BTC_HOLDINGS / 1e6
-        basic_mktcap_m      = mstr_price * MSTR_BASIC_SHARES / 1e6
+        # ── 官方 mNAV 計算（完全對齊 MSTR 官方定義）────────
+        btc_reserve_m       = btc_price * MSTR_BTC_HOLDINGS / 1e6        # BTC 儲備
+        basic_mktcap_m      = mstr_price * MSTR_BASIC_SHARES / 1e6        # 基本市值
         ev_m                = basic_mktcap_m + MSTR_TOTAL_DEBT_M + MSTR_TOTAL_PREF_M - MSTR_CASH_RESERVE_M
-        official_mnav       = ev_m / btc_reserve_m if btc_reserve_m > 0 else 0
+        # 官方淨儲備 = BTC 儲備 + 現金 − 債務 − 優先股
+        net_reserve_m       = btc_reserve_m + MSTR_CASH_RESERVE_M - MSTR_TOTAL_DEBT_M - MSTR_TOTAL_PREF_M
+        official_mnav       = ev_m / net_reserve_m if net_reserve_m > 0 else 0
+
+        # ── CEBE mNAV 計算（保持不變）────────────────────
         net_claims_m        = MSTR_TOTAL_DEBT_M + MSTR_TOTAL_PREF_M - MSTR_CASH_RESERVE_M
         claims_btc          = net_claims_m * 1e6 / btc_price
         common_equity_btc   = MSTR_BTC_HOLDINGS - claims_btc
@@ -265,7 +262,7 @@ with st.sidebar:
         cebe_mnav           = mstr_price / cebe_per_share if cebe_per_share > 0 else 0
     else:
         official_mnav = cebe_mnav = cebe_sats = drag_pct = cebe_per_share = 0
-        btc_reserve_m = basic_mktcap_m = ev_m = net_claims_m = claims_btc = common_equity_btc = 0
+        btc_reserve_m = basic_mktcap_m = ev_m = net_reserve_m = net_claims_m = claims_btc = common_equity_btc = 0
 
     if btc_price > 0:
         pnl_usd   = (btc_price - MSTR_AVG_COST) * MSTR_BTC_HOLDINGS
@@ -280,7 +277,7 @@ with st.sidebar:
         <div style="background:#181a20;border:1px solid #2b3139;border-radius:8px;padding:12px;margin-bottom:8px;">
             <div style="font-size:10px;color:#848e9c;">🏛️ 官方 mNAV（EV口徑）</div>
             <div style="font-size:24px;font-weight:800;color:{oc};font-family:monospace;">{official_mnav:.3f}x</div>
-            <div style="font-size:10px;color:#848e9c;">EV ${ev_m/1000:.2f}B ÷ BTC ${btc_reserve_m/1000:.2f}B</div>
+            <div style="font-size:10px;color:#848e9c;">EV ${ev_m/1000:.2f}B ÷ 淨儲備 ${net_reserve_m/1000:.2f}B</div>
         </div>
         <div style="background:#181a20;border:1px solid #2b3139;border-radius:8px;padding:12px;margin-bottom:8px;">
             <div style="font-size:10px;color:#848e9c;">🔬 CEBE mNAV（普通股真實溢價）</div>
@@ -587,7 +584,6 @@ if mstr_price > 0 and positions:
         if iv_use <= 0:
             iv_use = 0.85
 
-        # 如果 IV 太低（< 50%），代表數據不可靠，B-S 不顯示
         iv_valid = iv_use >= 0.50
 
         if iv_valid:
