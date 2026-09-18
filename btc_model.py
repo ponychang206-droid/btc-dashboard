@@ -4,14 +4,17 @@ import pandas as pd
 import plotly.graph_objects as go
 import yfinance as yf
 import requests
+import math
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
+from scipy.stats import norm as scipy_norm
+from scipy.optimize import brentq
 
 # ==========================================
 # 0. 頁面設定
 # ==========================================
 st.set_page_config(
-    page_title="MSTR 股價監控戰情室（yfinance 版）",
+    page_title="MSTR 股價監控戰情室（雲端版）",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -39,24 +42,56 @@ def save_params():
             st.session_state[f"{k}_val"] = st.session_state[k]
 
 # ── 備兌買權部位 Session State ──────────────────────────
+# ⚠️ market_price 是「備援值」，若 yfinance 抓不到對應合約，才會用到這個
 CC_POSITIONS_DEFAULT = [
-    {"id": 1, "label": "MSTR Sep25'26 $155", "strike": 155.0, "expiry": "2026-09-25", "contracts": 2,  "net_cash": 400.0,  "ticker": "MSTR", "active": True},
-    {"id": 2, "label": "MSTR Nov20'26 $160", "strike": 160.0, "expiry": "2026-11-20", "contracts": 6,  "net_cash": 1600.0, "ticker": "MSTR", "active": True},
-    {"id": 3, "label": "MSTR Dec18'26 $190", "strike": 190.0, "expiry": "2026-12-18", "contracts": 1,  "net_cash": 400.0,  "ticker": "MSTR", "active": True},
-    {"id": 4, "label": "MSTR Dec18'26 $195", "strike": 195.0, "expiry": "2026-12-18", "contracts": 1,  "net_cash": 400.0,  "ticker": "MSTR", "active": True},
-    {"id": 5, "label": "MSTR Jan15'27 $190", "strike": 190.0, "expiry": "2027-01-15", "contracts": 1,  "net_cash": 500.0,  "ticker": "MSTR", "active": True},
-    {"id": 6, "label": "MSTR Jan15'27 $195", "strike": 195.0, "expiry": "2027-01-15", "contracts": 20, "net_cash": 4000.0, "ticker": "MSTR", "active": True},
-    {"id": 7, "label": "COIN Nov20'26 $210", "strike": 210.0, "expiry": "2026-11-20", "contracts": 3,  "net_cash": 1084.0, "ticker": "COIN", "active": True},
+    {"id": 1, "label": "MSTR Sep25'26 $155", "strike": 155.0, "expiry": "2026-09-25", "contracts": 2,  "net_cash": 400.0,  "market_price": 0.84, "ticker": "MSTR", "active": True},
+    {"id": 2, "label": "MSTR Nov20'26 $160", "strike": 160.0, "expiry": "2026-11-20", "contracts": 6,  "net_cash": 1600.0, "market_price": 7.28, "ticker": "MSTR", "active": True},
+    {"id": 3, "label": "MSTR Dec18'26 $190", "strike": 190.0, "expiry": "2026-12-18", "contracts": 1,  "net_cash": 400.0,  "market_price": 5.35, "ticker": "MSTR", "active": True},
+    {"id": 4, "label": "MSTR Dec18'26 $195", "strike": 195.0, "expiry": "2026-12-18", "contracts": 1,  "net_cash": 400.0,  "market_price": 4.85, "ticker": "MSTR", "active": True},
+    {"id": 5, "label": "MSTR Jan15'27 $190", "strike": 190.0, "expiry": "2027-01-15", "contracts": 1,  "net_cash": 500.0,  "market_price": 7.43, "ticker": "MSTR", "active": True},
+    {"id": 6, "label": "MSTR Jan15'27 $195", "strike": 195.0, "expiry": "2027-01-15", "contracts": 20, "net_cash": 4000.0, "market_price": 6.80, "ticker": "MSTR", "active": True},
+    {"id": 7, "label": "COIN Nov20'26 $210", "strike": 210.0, "expiry": "2026-11-20", "contracts": 3,  "net_cash": 1084.0, "market_price": 8.79, "ticker": "COIN", "active": True},
 ]
 if "cc_positions" not in st.session_state:
     st.session_state["cc_positions"] = CC_POSITIONS_DEFAULT
+
+# ==========================================
+# 共用函數：Black-Scholes Greeks
+# ==========================================
+def bs_call_full(S, K, T, r, sigma):
+    if T <= 0 or sigma <= 0 or S <= 0:
+        return max(S - K, 0), 0, 0, 0, 0, 0
+    d1 = (math.log(S/K) + (r + 0.5*sigma**2)*T) / (sigma*math.sqrt(T))
+    d2 = d1 - sigma*math.sqrt(T)
+    price    = S*scipy_norm.cdf(d1) - K*math.exp(-r*T)*scipy_norm.cdf(d2)
+    delta    = scipy_norm.cdf(d1)
+    gamma    = scipy_norm.pdf(d1) / (S * sigma * math.sqrt(T))
+    theta    = (-(S*scipy_norm.pdf(d1)*sigma)/(2*math.sqrt(T)) - r*K*math.exp(-r*T)*scipy_norm.cdf(d2)) / 365
+    vega     = S * scipy_norm.pdf(d1) * math.sqrt(T) / 100
+    prob_itm = scipy_norm.cdf(d2)
+    return price, delta, gamma, theta, vega, prob_itm
+
+def bs_call(S, K, T, r, sigma):
+    p, d, g, t, v, prob = bs_call_full(S, K, T, r, sigma)
+    return p, d, t, prob
+
+def implied_vol_from_price(S, K, T, r, market_price):
+    """用市場價反推 IV（牛頓法）"""
+    if T <= 0 or S <= 0 or K <= 0 or market_price <= 0:
+        return 0
+    def objective(sigma):
+        p, _, _, _ = bs_call(S, K, T, r, sigma)
+        return p - market_price
+    try:
+        return brentq(objective, 0.01, 5.0)
+    except:
+        return 0
 
 # ==========================================
 # 1. 數據抓取模組（全部用 yfinance 或免費 API）
 # ==========================================
 @st.cache_data(ttl=30)
 def fetch_btc_price():
-    """BTC 價格（yfinance）"""
     try:
         btc = yf.Ticker("BTC-USD")
         df = btc.history(period="2d", interval="5m")
@@ -76,7 +111,6 @@ def fetch_mstr_data():
     try:
         mstr = yf.Ticker("MSTR")
 
-        # 第一層：6 個月日線
         try:
             hist = mstr.history(period="6mo", interval="1d")
             if hist.empty or np.isnan(hist['Close'].iloc[-1]):
@@ -84,7 +118,6 @@ def fetch_mstr_data():
         except:
             hist = None
 
-        # 第二層：3 個月日線
         if hist is None:
             try:
                 hist = mstr.history(period="3mo", interval="1d")
@@ -93,7 +126,6 @@ def fetch_mstr_data():
             except:
                 hist = None
 
-        # 第三層：1 個月日線
         if hist is None:
             try:
                 hist = mstr.history(period="1mo", interval="1d")
@@ -102,7 +134,6 @@ def fetch_mstr_data():
             except:
                 hist = None
 
-        # 第四層：Stooq 備援
         if hist is None:
             try:
                 stooq_url = "https://stooq.com/q/d/l/?s=mstr.us&i=d"
@@ -149,7 +180,6 @@ def fetch_mstr_data():
 
 @st.cache_data(ttl=60)
 def fetch_mstr_options():
-    """MSTR 期權鏈（yfinance，含 IV 異常值過濾）"""
     try:
         mstr = yf.Ticker("MSTR")
         exps = mstr.options
@@ -160,12 +190,10 @@ def fetch_mstr_options():
         calls = chain.calls
         puts  = chain.puts
 
-        # Put/Call Ratio
         call_vol = calls['volume'].sum() if calls['volume'].sum() > 0 else len(calls)
         put_vol  = puts['volume'].sum() if puts['volume'].sum() > 0 else len(puts)
         pc_ratio = float(put_vol / call_vol) if call_vol > 0 else 1.0
 
-        # ATM IV
         mstr_data_inner = fetch_mstr_data()
         atm_iv = 0
         if mstr_data_inner:
@@ -186,8 +214,72 @@ def fetch_mstr_options():
         return 0, 1.0, None
 
 @st.cache_data(ttl=60)
+def fetch_market_price_for_option(ticker_symbol, expiry_date, strike, option_type='call'):
+    """
+    從 yfinance 期權鏈自動抓取指定合約的市場價
+    回傳 (market_price, iv) 或 (0, 0) 表示抓不到
+    """
+    try:
+        obj = yf.Ticker(ticker_symbol)
+        exps = obj.options
+        if not exps:
+            return 0, 0
+
+        # 嘗試找出匹配的到期日
+        # yfinance 的到期日格式：YYYY-MM-DD
+        try:
+            exp_dt = datetime.strptime(expiry_date, "%Y-%m-%d")
+            exp_str = exp_dt.strftime("%Y-%m-%d")
+        except:
+            exp_str = expiry_date
+
+        # 找最接近的到期日
+        matched_exp = None
+        for e in exps:
+            if e == exp_str:
+                matched_exp = e
+                break
+        if matched_exp is None:
+            # 找最接近的
+            try:
+                target = datetime.strptime(exp_str, "%Y-%m-%d")
+                closest = min(exps, key=lambda e: abs((datetime.strptime(e, "%Y-%m-%d") - target).days))
+                # 差距超過 7 天就不匹配
+                if abs((datetime.strptime(closest, "%Y-%m-%d") - target).days) <= 7:
+                    matched_exp = closest
+            except:
+                pass
+
+        if matched_exp is None:
+            return 0, 0
+
+        chain = obj.option_chain(matched_exp)
+        df = chain.calls if option_type == 'call' else chain.puts
+
+        # 找最接近的履約價
+        df = df.copy()
+        df['strike_dist'] = abs(df['strike'] - strike)
+        matched = df.sort_values('strike_dist').iloc[0]
+
+        # 取中間價（bid/ask 平均）或最新成交價
+        bid = matched['bid'] if pd.notna(matched['bid']) and matched['bid'] > 0 else 0
+        ask = matched['ask'] if pd.notna(matched['ask']) and matched['ask'] > 0 else 0
+        last = matched['lastPrice'] if pd.notna(matched['lastPrice']) and matched['lastPrice'] > 0 else 0
+        iv = matched['impliedVolatility'] if pd.notna(matched['impliedVolatility']) and matched['impliedVolatility'] > 0 else 0
+
+        if bid > 0 and ask > 0:
+            market_price = (bid + ask) / 2
+        elif last > 0:
+            market_price = last
+        else:
+            market_price = 0
+
+        return market_price, iv
+    except:
+        return 0, 0
+
+@st.cache_data(ttl=60)
 def fetch_beta_mstr_btc():
-    """MSTR/BTC Beta（全部用 yfinance）"""
     try:
         mstr = yf.Ticker("MSTR").history(period="3mo", interval="1d")
         btc  = yf.Ticker("BTC-USD").history(period="3mo", interval="1d")
@@ -287,6 +379,7 @@ with st.sidebar:
 
     st.markdown("---")
     st.caption("📡 數據來源：yfinance + 公開 API")
+    st.caption("☁️ 雲端版：市場價自動抓取")
 
     btc_price, btc_delta = fetch_btc_price()
     mstr_data  = fetch_mstr_data()
@@ -347,7 +440,7 @@ with st.sidebar:
 # ==========================================
 st.markdown(f"""
 <div style="padding:10px 0 20px 0;border-bottom:1px solid #2b3139;margin-bottom:20px;">
-    <div style="font-size:22px;font-weight:700;color:#eaecef;">📡 MSTR 股價監控戰情室（yfinance 版）</div>
+    <div style="font-size:22px;font-weight:700;color:#eaecef;">📡 MSTR 股價監控戰情室（雲端版）</div>
     <div style="font-size:12px;color:#848e9c;margin-top:4px;">更新時間：{datetime.now(TAIPEI_TZ).strftime('%Y-%m-%d %H:%M:%S')} 台北時間</div>
 </div>
 """, unsafe_allow_html=True)
@@ -474,7 +567,7 @@ with col_sig:
         st.markdown(f'<div class="sig-bear"><div class="sig-t" style="color:#da3633;">🔴 美元偏強（DXY {macro["dxy"]:.2f}）</div><div class="sig-d">強勢美元對 BTC 形成壓力。</div></div>', unsafe_allow_html=True)
 
 # ==========================================
-# 7. 選擇權鏈（yfinance）
+# 7. 選擇權鏈
 # ==========================================
 st.markdown("---")
 st.markdown("#### 📋 MSTR 選擇權鏈（ATM 附近，最近到期）")
@@ -506,46 +599,43 @@ try:
 
             st.caption(f"到期日：{exp_choice} | MSTR 現價 ${mstr_price:.2f} | Call 選擇權 | 數據來源：yfinance")
             st.dataframe(disp, use_container_width=True, hide_index=True)
-
-            pc_vol = chain.puts['volume'].sum() / calls['volume'].sum() if calls['volume'].sum() > 0 else 0
-            st.caption(f"📊 P/C 成交量比：{pc_vol:.2f} | Put 總量：{int(chain.puts['volume'].sum()):,} | Call 總量：{int(calls['volume'].sum()):,}")
 except Exception as e:
     st.warning(f"選擇權鏈載入失敗：{e}")
 
 # ==========================================
-# 7b. 備兌買權部位監控與策略建議
+# 7b. 備兌買權部位監控與策略建議（雲端版：自動抓取市場價）
 # ==========================================
-import math
-from scipy.stats import norm as scipy_norm
-
-def bs_call(S, K, T, r, sigma):
-    if T <= 0 or sigma <= 0 or S <= 0:
-        return max(S - K, 0), 0, 0, 0
-    d1 = (math.log(S/K) + (r + 0.5*sigma**2)*T) / (sigma*math.sqrt(T))
-    d2 = d1 - sigma*math.sqrt(T)
-    price    = S*scipy_norm.cdf(d1) - K*math.exp(-r*T)*scipy_norm.cdf(d2)
-    delta    = scipy_norm.cdf(d1)
-    theta    = (-(S*scipy_norm.pdf(d1)*sigma)/(2*math.sqrt(T)) - r*K*math.exp(-r*T)*scipy_norm.cdf(d2)) / 365
-    prob_itm = scipy_norm.cdf(d2)
-    return price, delta, theta, prob_itm
-
 st.markdown("---")
 st.markdown("## 🎯 備兌買權部位監控與平倉策略")
+st.caption("☁️ 雲端版：市場價自動從 yfinance 期權鏈抓取，若抓不到則用手動備援值")
 
 with st.expander("✏️ 編輯部位（新增/修改/停用）"):
-    st.caption("⚠️ net_cash = 這筆合約從開倉至今的歷史淨收入總額。")
+    st.caption("⚠️ net_cash = 這筆合約從開倉至今的歷史淨收入總額。市場價 = 備援值（yfinance 抓不到時使用）。")
     positions = st.session_state["cc_positions"]
     for i, pos in enumerate(positions):
-        c1,c2,c3,c4,c5,c6 = st.columns([2,1.2,1.5,1,1.2,0.8])
-        positions[i]["label"]     = c1.text_input("名稱", pos["label"],     key=f"cc_label_{i}")
-        positions[i]["strike"]    = c2.number_input("履約價$", pos["strike"], step=5.0, key=f"cc_k_{i}")
-        positions[i]["expiry"]    = c3.text_input("到期(YYYY-MM-DD)", pos["expiry"], key=f"cc_exp_{i}")
-        positions[i]["contracts"] = c4.number_input("口數", pos["contracts"], step=1, key=f"cc_ct_{i}")
-        positions[i]["net_cash"]  = c5.number_input("歷史淨收入$", pos["net_cash"], step=10.0, key=f"cc_cash_{i}")
-        positions[i]["active"]    = c6.checkbox("啟用", pos["active"], key=f"cc_act_{i}")
+        c1,c2,c3,c4,c5,c6,c7 = st.columns([2,1.2,1.5,1,1.2,1.2,0.8])
+        positions[i]["label"]        = c1.text_input("名稱", pos["label"], key=f"cc_label_{i}")
+        positions[i]["strike"]       = c2.number_input("履約價$",
+            min_value=0.0, max_value=10000.0, value=float(pos["strike"]),
+            step=5.0, key=f"cc_k_{i}")
+        positions[i]["expiry"]       = c3.text_input("到期(YYYY-MM-DD)", pos["expiry"], key=f"cc_exp_{i}")
+        positions[i]["contracts"]    = c4.number_input("口數",
+            min_value=0, max_value=10000, value=int(pos["contracts"]),
+            step=1, key=f"cc_ct_{i}")
+        positions[i]["net_cash"]     = c5.number_input("歷史淨收入$",
+            min_value=-100000.0, max_value=1000000.0, value=float(pos["net_cash"]),
+            step=10.0, key=f"cc_cash_{i}")
+        positions[i]["market_price"] = c6.number_input("備援市價$",
+            min_value=0.0, max_value=10000.0, value=float(pos.get("market_price", 0.0)),
+            step=0.1, key=f"cc_mkt_{i}")
+        positions[i]["active"]       = c7.checkbox("啟用", pos["active"], key=f"cc_act_{i}")
     if st.button("➕ 新增部位"):
-        st.session_state["cc_positions"].append({"id": len(positions)+1, "label": "新部位",
-            "strike": 200.0, "expiry": "2025-12-19", "contracts": 1, "net_cash": 0.0, "ticker": "MSTR", "active": True})
+        st.session_state["cc_positions"].append({
+            "id": len(positions)+1, "label": "新部位",
+            "strike": 200.0, "expiry": "2025-12-19",
+            "contracts": 1, "net_cash": 0.0, "market_price": 0.0,
+            "ticker": "MSTR", "active": True
+        })
         st.rerun()
     st.session_state["cc_positions"] = positions
 
@@ -564,20 +654,56 @@ if mstr_price > 0 and positions:
             days_left = 30
             T = 30/365
 
-        iv_use = atm_iv if atm_iv > 0 else (mstr_data['hv30'] if mstr_data and mstr_data['hv30'] > 0 else 0.85)
+        # ── 自動從 yfinance 抓取市場價 ──
+        auto_market_price = 0
+        auto_iv = 0
+        try:
+            # 判斷是 Call 還是 Put（目前都是 Call）
+            auto_market_price, auto_iv = fetch_market_price_for_option(
+                pos["ticker"], pos["expiry"], pos["strike"], 'call'
+            )
+        except:
+            pass
+
+        # 若自動抓取失敗，用手動備援值
+        manual_market_price = pos.get("market_price", 0.0)
+        if auto_market_price > 0:
+            market_price = auto_market_price
+            price_source = "自動"
+        elif manual_market_price > 0:
+            market_price = manual_market_price
+            price_source = "手動"
+        else:
+            market_price = 0
+            price_source = "無"
+
+        # ── 用市場價反推 IV，若失敗則用 atm_iv ──
+        if market_price > 0 and T > 0:
+            iv_from_market = implied_vol_from_price(mstr_price, pos["strike"], T, r_rf, market_price)
+            if iv_from_market > 0:
+                iv_use = iv_from_market
+            else:
+                iv_use = atm_iv if atm_iv > 0 else (mstr_data['hv30'] if mstr_data and mstr_data['hv30'] > 0 else 0.85)
+        else:
+            iv_use = atm_iv if atm_iv > 0 else (mstr_data['hv30'] if mstr_data and mstr_data['hv30'] > 0 else 0.85)
         if iv_use <= 0: iv_use = 0.85
 
         iv_valid = iv_use >= 0.50
 
+        # 用反推的 IV 算 Delta / Theta / 被指派機率
         if iv_valid:
             bs_price, delta, theta, prob_itm = bs_call(mstr_price, pos["strike"], T, r_rf, iv_use)
-            bs_disp, delta_disp, prob_disp, theta_disp = f"${bs_price:.2f}", f"{delta:.2f}", f"{prob_itm*100:.1f}%", f"${theta:.3f}"
+            delta_disp = f"{delta:.2f}"
+            prob_disp  = f"{prob_itm*100:.1f}%"
+            theta_disp = f"${theta:.3f}"
         else:
             bs_price = delta = theta = prob_itm = 0
-            bs_disp = delta_disp = prob_disp = theta_disp = "—"
+            delta_disp = prob_disp = theta_disp = "—"
+
+        market_disp = f"${market_price:.2f}" if market_price > 0 else "—"
 
         net_cash    = pos["net_cash"]
-        buyback_est = bs_price * 100 * pos["contracts"] if iv_valid else 0
+        buyback_est = market_price * 100 * pos["contracts"] if market_price > 0 else 0
         total_pnl   = net_cash - buyback_est
         pnl_per     = total_pnl / pos["contracts"] if pos["contracts"] > 0 else 0
 
@@ -591,20 +717,18 @@ if mstr_price > 0 and positions:
         rows_cc.append({
             "部位": pos["label"], "履約價": f"${pos['strike']:.0f}", "到期": pos["expiry"],
             "剩餘天數": f"{days_left}天", "口數": pos["contracts"],
-            "B-S估價": bs_disp, "Delta": delta_disp, "被指派機率": prob_disp, "Theta/天": theta_disp,
+            "市場價": market_disp, "來源": price_source,
+            "Delta": delta_disp, "被指派機率": prob_disp, "Theta/天": theta_disp,
             "每口P&L": f"${pnl_per:+.0f}", "總P&L": f"${total_pnl:+,.0f}", "狀態": urgency,
         })
 
     df_cc = pd.DataFrame(rows_cc)
     st.dataframe(df_cc, use_container_width=True, hide_index=True)
 
-    if atm_iv >= 0.50:
-        total_buyback = sum(bs_call(mstr_price, p["strike"],
-            max(1,(datetime.strptime(p["expiry"],"%Y-%m-%d")-datetime.now().replace(hour=0,minute=0,second=0,microsecond=0)).days)/365,
-            r_rf, atm_iv)[0] * 100 * p["contracts"] for p in positions)
-    else:
-        total_buyback = 0
-
+    total_buyback = sum(
+        (fetch_market_price_for_option(p["ticker"], p["expiry"], p["strike"], 'call')[0] or p.get("market_price", 0.0)) * 100 * p["contracts"]
+        for p in positions
+    )
     total_net_cash = sum(p["net_cash"] for p in positions)
     net_pnl_all = total_net_cash - total_buyback if total_buyback > 0 else 0
 
@@ -613,45 +737,6 @@ if mstr_price > 0 and positions:
     col_b.metric("這批合約歷史淨收入", f"${total_net_cash:,.0f}")
     col_c.metric("淨損益（正=獲利）", f"${net_pnl_all:+,.0f}" if total_buyback > 0 else "—",
                  delta="獲利" if net_pnl_all >= 0 else "虧損" if total_buyback > 0 else "")
-
-    st.markdown("### 💡 策略建議")
-    for pos in positions:
-        try:
-            exp_dt = datetime.strptime(pos["expiry"], "%Y-%m-%d")
-            today  = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-            days_left = max(0, (exp_dt - today).days)
-            T = max(days_left, 1) / 365
-        except:
-            days_left, T = 30, 30/365
-
-        iv_use = atm_iv if atm_iv > 0 else (mstr_data["hv30"] if mstr_data and mstr_data["hv30"] > 0 else 0.85)
-        if iv_use <= 0: iv_use = 0.85
-
-        if iv_use >= 0.50:
-            bs_price, delta, theta, prob_itm = bs_call(mstr_price, pos["strike"], T, r_rf, iv_use)
-            buyback_est = bs_price * 100 * pos["contracts"]
-            total_pnl   = pos["net_cash"] - buyback_est
-
-            if days_left <= 21 or prob_itm > 0.6:
-                st.markdown(f"""
-<div style="background:#2d1517;border-left:4px solid #da3633;border-radius:6px;padding:14px;margin-bottom:10px;">
-<div style="font-size:13px;font-weight:700;color:#da3633;">🚨 【立即處理】{pos["label"]} — 剩 {days_left} 天，被指派機率 {prob_itm*100:.1f}%</div>
-<div style="font-size:12px;color:#c9d1d9;margin-top:8px;line-height:1.7;">
-<b>選項 A：立即買回平倉</b>：估算成本 ${buyback_est:,.0f}，總損益 ${total_pnl:+,.0f}<br>
-<b>選項 B：Roll Forward</b>：買回 + 賣更遠到期 Call<br>
-<b>選項 C：Roll Up & Out</b>：買回 + 賣更高履約價 + 更遠到期 Call
-</div>
-</div>""", unsafe_allow_html=True)
-            elif prob_itm > 0.35:
-                st.markdown(f"""
-<div style="background:#1c1f26;border-left:4px solid #f0883e;border-radius:6px;padding:14px;margin-bottom:10px;">
-<div style="font-size:13px;font-weight:700;color:#f0883e;">⚠️ 【持續監控】{pos["label"]} — 被指派機率 {prob_itm*100:.1f}%，剩 {days_left} 天</div>
-</div>""", unsafe_allow_html=True)
-            else:
-                st.markdown(f"""
-<div style="background:#0d2818;border-left:4px solid #238636;border-radius:6px;padding:14px;margin-bottom:10px;">
-<div style="font-size:13px;font-weight:700;color:#238636;">✅ 【安全觀察】{pos["label"]} — 被指派機率 {prob_itm*100:.1f}%，剩 {days_left} 天</div>
-</div>""", unsafe_allow_html=True)
 
 # ==========================================
 # 8. 官方 mNAV 壓力測試模擬表
@@ -677,17 +762,3 @@ for p in sim_prices:
     })
 
 st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-
-st.markdown("""
-<div style="background:#181a20;border:1px solid #2b3139;border-radius:8px;padding:16px;margin:12px 0;">
-    <p style="color:#fff;font-size:13px;font-weight:bold;margin-bottom:10px;">💡 如何解讀此表？</p>
-    <ul style="color:#fff;font-size:12px;line-height:1.7;padding-left:18px;">
-        <li><b>每股 Net BPS（sats）</b>：不受 BTC 價格影響，是衡量每股含金量的穩定指標，越高越好。</li>
-        <li><b>每股 Net BPS（USD）</b>：真實清算價值，股價應在此基礎上給予溢價。</li>
-        <li><b>Drag</b>：BTC 越漲，侵蝕率越低，普通股股東受益越多。</li>
-        <li><b>1.0x</b>：清算警戒線，股價跌到此處代表市場開始定價清算風險。</li>
-        <li><b>1.2x</b>：歷史合理防線，左側抄底參考點。</li>
-        <li><b>1.6x</b>：泡沫警戒，超過此線需謹慎追多。</li>
-    </ul>
-</div>
-""", unsafe_allow_html=True)
