@@ -4,8 +4,11 @@ import pandas as pd
 import plotly.graph_objects as go
 import yfinance as yf
 import requests
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
+
+# 富途 OpenAPI
+from futu import OpenQuoteContext, RET_OK
 
 # ==========================================
 # 0. 頁面設定
@@ -16,6 +19,23 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 TAIPEI_TZ = ZoneInfo("Asia/Taipei")
+
+# ==========================================
+# 富途 OpenD 連線設定
+# ==========================================
+FUTU_HOST = "127.0.0.1"
+FUTU_PORT = 11111
+MSTR_CODE = "US.MSTR"
+
+@st.cache_resource
+def get_futu_ctx():
+    """建立富途 OpenD 連線（cache_resource 只建立一次）"""
+    try:
+        ctx = OpenQuoteContext(host=FUTU_HOST, port=FUTU_PORT)
+        return ctx
+    except Exception as e:
+        st.warning(f"⚠️ 無法連線 OpenD：{e}")
+        return None
 
 # ==========================================
 # Session State 初始化
@@ -52,10 +72,11 @@ if "cc_positions" not in st.session_state:
     st.session_state["cc_positions"] = CC_POSITIONS_DEFAULT
 
 # ==========================================
-# 1. 數據抓取模組
+# 1. 數據抓取模組（富途版）
 # ==========================================
 @st.cache_data(ttl=30)
 def fetch_btc_price():
+    """BTC 價格（仍用 yfinance，富途不提供）"""
     try:
         btc = yf.Ticker("BTC-USD")
         df = btc.history(period="2d", interval="5m")
@@ -70,68 +91,51 @@ def fetch_btc_price():
 
 @st.cache_data(ttl=60)
 def fetch_mstr_data():
-    """MSTR 數據抓取（含多層備援邏輯）"""
-    hist = None
+    """MSTR 股價與歷史數據（改用富途 OpenAPI）"""
+    ctx = get_futu_ctx()
+    if ctx is None:
+        return None
+
     try:
-        mstr = yf.Ticker("MSTR")
+        # ── 1. 即時報價 ─────────────────────────────
+        ret_snap, snap = ctx.get_market_snapshot([MSTR_CODE])
+        if ret_snap != RET_OK or snap.empty:
+            return None
+        price = float(snap['last_price'].iloc[0])
 
-        # ── 第一層：6 個月日線 ─────────────────────────
-        try:
-            hist = mstr.history(period="6mo", interval="1d")
-            if hist.empty or np.isnan(hist['Close'].iloc[-1]):
-                hist = None
-        except:
-            hist = None
-
-        # ── 第二層：3 個月日線 ─────────────────────────
-        if hist is None:
-            try:
-                hist = mstr.history(period="3mo", interval="1d")
-                if hist.empty or np.isnan(hist['Close'].iloc[-1]):
-                    hist = None
-            except:
-                hist = None
-
-        # ── 第三層：1 個月日線 ─────────────────────────
-        if hist is None:
-            try:
-                hist = mstr.history(period="1mo", interval="1d")
-                if hist.empty or np.isnan(hist['Close'].iloc[-1]):
-                    hist = None
-            except:
-                hist = None
-
-        # ── 第四層：改用 Stooq 備援 ─────────────────────
-        if hist is None:
-            try:
-                stooq_url = "https://stooq.com/q/d/l/?s=mstr.us&i=d"
-                df_stooq = pd.read_csv(stooq_url)
-                if not df_stooq.empty:
-                    df_stooq['Date'] = pd.to_datetime(df_stooq['Date'])
-                    df_stooq = df_stooq.set_index('Date').sort_index()
-                    df_stooq = df_stooq.tail(130)  # 取最近約 6 個月
-                    if len(df_stooq) >= 20 and not np.isnan(df_stooq['Close'].iloc[-1]):
-                        hist = df_stooq
-            except:
-                pass
-
-        # 如果全部失敗，回傳 None
-        if hist is None or hist.empty:
+        # ── 2. 歷史 K 線（取 6 個月日線）─────────────
+        end_date = datetime.now().strftime('%Y-%m-%d')
+        start_date = (datetime.now() - timedelta(days=180)).strftime('%Y-%m-%d')
+        ret_k, kline = ctx.get_history_kline(
+            code=MSTR_CODE,
+            start=start_date,
+            end=end_date,
+            ktype='K_DAY',
+            autype='QFQ'
+        )
+        if ret_k != RET_OK or kline.empty:
             return None
 
-        # ── 正常計算指標 ─────────────────────────────
-        price = float(hist['Close'].iloc[-1])
+        # 整理歷史數據
+        kline['time_key'] = pd.to_datetime(kline['time_key'])
+        hist = kline.set_index('time_key')[['open', 'high', 'low', 'close', 'volume']].copy()
+        hist.columns = ['Open', 'High', 'Low', 'Close', 'Volume']
+
+        # ── 3. 計算技術指標 ─────────────────────────
         delta = hist['Close'].diff()
         gain  = delta.clip(lower=0).rolling(14).mean()
         loss  = (-delta.clip(upper=0)).rolling(14).mean()
         rs    = gain / loss
         rsi   = float((100 - 100 / (1 + rs)).iloc[-1])
+
         ma20 = float(hist['Close'].rolling(20).mean().iloc[-1])
         ma60 = float(hist['Close'].rolling(60).mean().iloc[-1]) if len(hist) >= 60 else ma20
+
         ma20_series = hist['Close'].rolling(20).mean()
         std20       = hist['Close'].rolling(20).std()
         bb_upper    = float((ma20_series + 2 * std20).iloc[-1])
         bb_lower    = float((ma20_series - 2 * std20).iloc[-1])
+
         log_ret = np.log(hist['Close'] / hist['Close'].shift(1)).dropna()
         hv30    = float(log_ret.tail(30).std() * np.sqrt(252)) if len(log_ret) >= 30 else 0
 
@@ -141,58 +145,128 @@ def fetch_mstr_data():
             'bb_upper': bb_upper, 'bb_lower': bb_lower,
             'hv30': hv30, 'hist': hist,
         }
-    except:
+    except Exception as e:
+        st.warning(f"⚠️ 富途 MSTR 數據抓取失敗：{e}")
         return None
 
 @st.cache_data(ttl=60)
 def fetch_mstr_options():
-    try:
-        mstr = yf.Ticker("MSTR")
-        exps = mstr.options
-        if not exps:
-            return None, None, None
-        chain     = mstr.option_chain(exps[0])
-        calls     = chain.calls
-        puts      = chain.puts
-        pc_ratio  = float(puts['volume'].sum() / calls['volume'].sum()) if calls['volume'].sum() > 0 else 1.0
+    """MSTR 期權鏈（改用富途 OpenAPI，直接返回 IV / Delta / Theta）"""
+    ctx = get_futu_ctx()
+    if ctx is None:
+        return 0, 1.0, None
 
+    try:
+        # ── 1. 取得最近的期權到期日 ──────────────────
+        ret_exp, exp_data = ctx.get_option_expiration_date(code=MSTR_CODE)
+        if ret_exp != RET_OK or exp_data.empty:
+            return 0, 1.0, None
+
+        nearest_expiry = exp_data['strike_time'].iloc[0]
+
+        # ── 2. 取得該到期日的期權鏈 ──────────────────
+        ret_chain, chain = ctx.get_option_chain(
+            code=MSTR_CODE,
+            start=nearest_expiry,
+            end=nearest_expiry
+        )
+        if ret_chain != RET_OK or chain.empty:
+            return 0, 1.0, nearest_expiry
+
+        # ── 3. 分離 Call / Put ──────────────────────
+        calls = chain[chain['option_type'] == 'CALL'].copy()
+        puts  = chain[chain['option_type'] == 'PUT'].copy()
+
+        # ── 4. 計算 ATM IV（取最接近現價的 5 個 Call 的中位數）──
         mstr_data_inner = fetch_mstr_data()
         atm_iv = 0
-        if mstr_data_inner:
+        if mstr_data_inner and not calls.empty:
             p = mstr_data_inner['price']
             hv30 = mstr_data_inner['hv30'] if mstr_data_inner['hv30'] > 0 else 0.85
 
-            calls_v = calls[(calls['impliedVolatility'] > 0.50) &
-                            (calls['impliedVolatility'] < 3.00)].copy()
-
-            if not calls_v.empty:
-                calls_v['dist'] = abs(calls_v['strike'] - p)
-                near_atm = calls_v.sort_values('dist').head(5)
-                atm_iv = float(near_atm['impliedVolatility'].median())
+            calls['dist'] = abs(calls['strike_price'] - p)
+            near_atm = calls.sort_values('dist').head(5)
+            # 富途的 implied_volatility 欄位可能是小數或百分比，需標準化
+            iv_vals = near_atm['implied_volatility'].dropna()
+            if not iv_vals.empty:
+                atm_iv = float(iv_vals.median())
+                # 如果富途返回的是百分比（如 85 而非 0.85），需轉換
+                if atm_iv > 3.0:
+                    atm_iv = atm_iv / 100.0
                 if atm_iv < hv30 * 0.7:
                     atm_iv = hv30
             else:
                 atm_iv = hv30
+        elif mstr_data_inner:
+            atm_iv = mstr_data_inner['hv30'] if mstr_data_inner['hv30'] > 0 else 0.85
 
-        return atm_iv, pc_ratio, exps[0]
-    except:
+        # ── 5. 計算 Put/Call Ratio（用未平倉量或成交量）──
+        try:
+            call_vol = calls['volume'].sum() if 'volume' in calls.columns else len(calls)
+            put_vol  = puts['volume'].sum() if 'volume' in puts.columns else len(puts)
+            pc_ratio = float(put_vol / call_vol) if call_vol > 0 else 1.0
+        except:
+            pc_ratio = 1.0
+
+        return atm_iv, pc_ratio, nearest_expiry
+    except Exception as e:
+        st.warning(f"⚠️ 富途期權鏈抓取失敗：{e}")
         return 0, 1.0, None
 
 @st.cache_data(ttl=60)
-def fetch_beta_mstr_btc():
+def fetch_futu_option_chain(expiry_date):
+    """取得指定到期日的完整期權鏈（用於選擇權鏈表格）"""
+    ctx = get_futu_ctx()
+    if ctx is None:
+        return None
+
     try:
-        mstr = yf.Ticker("MSTR").history(period="3mo", interval="1d")
-        btc  = yf.Ticker("BTC-USD").history(period="3mo", interval="1d")
-        # 如果 MSTR 抓不到，回傳 0
-        if mstr.empty or btc.empty:
+        ret_chain, chain = ctx.get_option_chain(
+            code=MSTR_CODE,
+            start=expiry_date,
+            end=expiry_date
+        )
+        if ret_chain != RET_OK or chain.empty:
+            return None
+        return chain
+    except:
+        return None
+
+@st.cache_data(ttl=60)
+def fetch_beta_mstr_btc():
+    """MSTR/BTC Beta（MSTR 部分改用富途）"""
+    ctx = get_futu_ctx()
+    if ctx is None:
+        return 0
+
+    try:
+        # MSTR 歷史 K 線（3 個月）
+        end_date = datetime.now().strftime('%Y-%m-%d')
+        start_date = (datetime.now() - timedelta(days=90)).strftime('%Y-%m-%d')
+        ret_k, kline = ctx.get_history_kline(
+            code=MSTR_CODE,
+            start=start_date,
+            end=end_date,
+            ktype='K_DAY',
+            autype='QFQ'
+        )
+        if ret_k != RET_OK or kline.empty:
             return 0
-        mstr.index = mstr.index.tz_localize(None)
-        btc.index  = btc.index.tz_localize(None)
-        m_ret = mstr['Close'].pct_change().dropna()
-        b_ret = btc['Close'].pct_change().dropna()
+
+        kline['time_key'] = pd.to_datetime(kline['time_key'])
+        mstr = kline.set_index('time_key')['close']
+
+        # BTC 歷史數據（仍用 yfinance）
+        btc = yf.Ticker("BTC-USD").history(period="3mo", interval="1d")['Close']
+        btc.index = btc.index.tz_localize(None)
+
+        m_ret = mstr.pct_change().dropna()
+        b_ret = btc.pct_change().dropna()
+
         combined = pd.concat([m_ret, b_ret], axis=1, join='inner').dropna()
         if len(combined) < 10:
             return 0
+
         cov = np.cov(combined.iloc[:, 0], combined.iloc[:, 1])[0][1]
         var = np.var(combined.iloc[:, 1])
         return cov / var if var != 0 else 0
@@ -281,6 +355,7 @@ with st.sidebar:
         key="MSTR_FDSO", on_change=save_params)
 
     st.markdown("---")
+    st.caption(f"🔌 富途 OpenD：{FUTU_HOST}:{FUTU_PORT}")
 
     btc_price, btc_delta = fetch_btc_price()
     mstr_data  = fetch_mstr_data()
@@ -293,17 +368,14 @@ with st.sidebar:
     atm_iv, pc_ratio, next_exp = fetch_mstr_options()
 
     if btc_price > 0 and mstr_price > 0:
-        # ── 官方 mNAV 計算（FDSO 口徑）────────────────────
         usd_assets_m        = MSTR_CASH_RESERVE_M
         net_btc             = MSTR_BTC_HOLDINGS - (MSTR_TOTAL_DEBT_M + MSTR_TOTAL_PREF_M - usd_assets_m) * 1e6 / btc_price
         net_bps_usd         = (net_btc / MSTR_FDSO) * btc_price if MSTR_FDSO > 0 else 0
         official_mnav       = mstr_price / net_bps_usd if net_bps_usd > 0 else 0
 
-        # ── Basic mNAV 計算（Basic Shares 口徑）────────────
         net_bps_basic_usd   = (net_btc / MSTR_BASIC_SHARES) * btc_price if MSTR_BASIC_SHARES > 0 else 0
         basic_mnav          = mstr_price / net_bps_basic_usd if net_bps_basic_usd > 0 else 0
 
-        # 輔助顯示用
         btc_reserve_m       = btc_price * MSTR_BTC_HOLDINGS / 1e6
         net_reserve_m       = btc_reserve_m + usd_assets_m - MSTR_TOTAL_DEBT_M - MSTR_TOTAL_PREF_M
         net_claims_m        = MSTR_TOTAL_DEBT_M + MSTR_TOTAL_PREF_M - MSTR_CASH_RESERVE_M
@@ -485,7 +557,7 @@ with col_chart:
         )
         st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
     else:
-        st.warning("⚠️ MSTR 歷史數據載入失敗，請稍後重新整理頁面。")
+        st.warning("⚠️ MSTR 歷史數據載入失敗，請確認 OpenD 是否正在運行。")
 
 with col_sig:
     st.markdown("#### 🚦 多維訊號判讀")
@@ -543,43 +615,61 @@ with col_sig:
         st.markdown(f'<div class="sig-bear"><div class="sig-t" style="color:#da3633;">🔴 美元偏強（DXY {macro["dxy"]:.2f}）</div><div class="sig-d">強勢美元對 BTC 形成壓力，連帶影響 MSTR。</div></div>', unsafe_allow_html=True)
 
 # ==========================================
-# 7. 選擇權鏈
+# 7. 選擇權鏈（富途版）
 # ==========================================
 st.markdown("---")
 st.markdown("#### 📋 MSTR 選擇權鏈（ATM 附近，最近到期）")
 try:
-    mstr_obj = yf.Ticker("MSTR")
-    exps = mstr_obj.options
-    if exps and mstr_price > 0:
-        exp_choice = st.selectbox("選擇到期日", exps[:6], index=0)
-        chain = mstr_obj.option_chain(exp_choice)
-        calls = chain.calls.copy()
-        puts  = chain.puts.copy()
-        calls['dist'] = abs(calls['strike'] - mstr_price)
+    if next_exp and mstr_price > 0:
+        ctx = get_futu_ctx()
+        if ctx is not None:
+            ret_exp, exp_data = ctx.get_option_expiration_date(code=MSTR_CODE)
+            if ret_exp == RET_OK and not exp_data.empty:
+                exp_list = exp_data['strike_time'].tolist()
+                exp_choice = st.selectbox("選擇到期日", exp_list[:6], index=0)
 
-        atm_calls = calls.sort_values('dist').head(10).sort_values('strike').reset_index(drop=True)
+                chain = fetch_futu_option_chain(exp_choice)
+                if chain is not None and not chain.empty:
+                    calls = chain[chain['option_type'] == 'CALL'].copy()
+                    calls['dist'] = abs(calls['strike_price'] - mstr_price)
+                    atm_calls = calls.sort_values('dist').head(10).sort_values('strike_price').reset_index(drop=True)
 
-        atm_calls['ATM'] = atm_calls['strike'].apply(
-            lambda x: '← ATM' if abs(x - mstr_price) == atm_calls['dist'].min() else '')
+                    atm_calls['ATM'] = atm_calls['strike_price'].apply(
+                        lambda x: '← ATM' if abs(x - mstr_price) == atm_calls['dist'].min() else '')
 
-        iv_fallback = mstr_data['hv30'] if mstr_data and mstr_data['hv30'] > 0 else 0.8
-        atm_calls['IV顯示'] = atm_calls['impliedVolatility'].apply(
-            lambda x: f"{x*100:.1f}%" if x > 0 else f"~{iv_fallback*100:.1f}%(HV)")
+                    # 富途期權鏈欄位名稱可能為：strike_price, last_price, bid_price, ask_price, implied_volatility, volume, open_interest
+                    iv_col = 'implied_volatility' if 'implied_volatility' in atm_calls.columns else None
+                    iv_fallback = mstr_data['hv30'] if mstr_data and mstr_data['hv30'] > 0 else 0.8
 
-        disp = atm_calls[['strike','lastPrice','bid','ask','IV顯示','volume','openInterest','ATM']].copy()
-        disp.columns = ['履約價','最新成交','Bid','Ask','IV','成交量','未平倉量','']
-        disp['履約價'] = disp['履約價'].apply(lambda x: f"${x:.0f}")
-        disp['最新成交'] = disp['最新成交'].apply(lambda x: f"${x:.2f}" if x > 0 else "—")
-        disp['Bid'] = disp['Bid'].apply(lambda x: f"${x:.2f}" if x > 0 else "—")
-        disp['Ask'] = disp['Ask'].apply(lambda x: f"${x:.2f}" if x > 0 else "—")
-        disp['成交量'] = disp['成交量'].apply(lambda x: f"{int(x):,}" if x > 0 else "—")
-        disp['未平倉量'] = disp['未平倉量'].apply(lambda x: f"{int(x):,}" if x > 0 else "—")
+                    if iv_col:
+                        atm_calls['IV顯示'] = atm_calls[iv_col].apply(
+                            lambda x: f"{x*100:.1f}%" if pd.notna(x) and x > 0 else f"~{iv_fallback*100:.1f}%(HV)")
+                    else:
+                        atm_calls['IV顯示'] = f"~{iv_fallback*100:.1f}%(HV)"
 
-        st.caption(f"到期日：{exp_choice} | MSTR 現價 ${mstr_price:.2f} | Call 選擇權 | Bid/Ask 為 '—' 表示盤後無報價，下個交易日開盤後更新")
-        st.dataframe(disp.reset_index(drop=True), use_container_width=True, hide_index=True)
+                    disp = pd.DataFrame()
+                    disp['履約價'] = atm_calls['strike_price'].apply(lambda x: f"${x:.0f}")
+                    disp['最新成交'] = atm_calls['last_price'].apply(lambda x: f"${x:.2f}" if x > 0 else "—") if 'last_price' in atm_calls.columns else "—"
+                    disp['Bid'] = atm_calls['bid_price'].apply(lambda x: f"${x:.2f}" if x > 0 else "—") if 'bid_price' in atm_calls.columns else "—"
+                    disp['Ask'] = atm_calls['ask_price'].apply(lambda x: f"${x:.2f}" if x > 0 else "—") if 'ask_price' in atm_calls.columns else "—"
+                    disp['IV'] = atm_calls['IV顯示']
+                    disp['成交量'] = atm_calls['volume'].apply(lambda x: f"{int(x):,}" if pd.notna(x) and x > 0 else "—") if 'volume' in atm_calls.columns else "—"
+                    disp['未平倉量'] = atm_calls['open_interest'].apply(lambda x: f"{int(x):,}" if pd.notna(x) and x > 0 else "—") if 'open_interest' in atm_calls.columns else "—"
+                    disp[''] = atm_calls['ATM']
 
-        pc_vol = puts['volume'].sum() / calls['volume'].sum() if calls['volume'].sum() > 0 else 0
-        st.caption(f"📊 P/C 成交量比：{pc_vol:.2f} | Put 總量：{int(puts['volume'].sum()):,} | Call 總量：{int(calls['volume'].sum()):,}")
+                    st.caption(f"到期日：{exp_choice} | MSTR 現價 ${mstr_price:.2f} | Call 選擇權 | 數據來源：富途 OpenAPI")
+                    st.dataframe(disp, use_container_width=True, hide_index=True)
+
+                    pc_vol = len(chain[chain['option_type'] == 'PUT']) / len(calls) if len(calls) > 0 else 0
+                    st.caption(f"📊 P/C 合約數比：{pc_vol:.2f} | Put 總數：{len(chain[chain['option_type'] == 'PUT'])} | Call 總數：{len(calls)}")
+                else:
+                    st.warning("⚠️ 富途期權鏈為空，可能該到期日尚無數據。")
+            else:
+                st.warning("⚠️ 無法取得富途期權到期日列表。")
+        else:
+            st.warning("⚠️ 富途 OpenD 未連線，請確認 OpenD 正在運行。")
+    else:
+        st.warning("⚠️ MSTR 現價或期權數據尚未載入。")
 except Exception as e:
     st.warning(f"選擇權鏈載入失敗：{e}")
 
@@ -590,7 +680,7 @@ import math
 from scipy.stats import norm as scipy_norm
 
 def bs_call(S, K, T, r, sigma):
-    """Black-Scholes Call 定價"""
+    """Black-Scholes Call 定價（備援用）"""
     if T <= 0 or sigma <= 0 or S <= 0:
         return max(S - K, 0), 0, 0, 0
     d1 = (math.log(S/K) + (r + 0.5*sigma**2)*T) / (sigma*math.sqrt(T))
@@ -867,7 +957,6 @@ st.markdown(f"基於 **{MSTR_BTC_HOLDINGS:,} BTC** 持倉，官方 mNAV 計算�
 sim_prices = list(range(50000, 200001, 10000))
 rows = []
 for p in sim_prices:
-    # 官方 mNAV 公式
     sim_net_btc     = MSTR_BTC_HOLDINGS - (MSTR_TOTAL_DEBT_M + MSTR_TOTAL_PREF_M - MSTR_CASH_RESERVE_M) * 1e6 / p
     sim_net_bps_usd = (sim_net_btc / MSTR_FDSO) * p if MSTR_FDSO > 0 else 0
     sim_net_bps_sats = sim_net_btc / MSTR_FDSO * 1e8 if MSTR_FDSO > 0 else 0
