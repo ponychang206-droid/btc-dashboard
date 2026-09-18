@@ -70,11 +70,56 @@ def fetch_btc_price():
 
 @st.cache_data(ttl=60)
 def fetch_mstr_data():
+    """MSTR 數據抓取（含多層備援邏輯）"""
+    hist = None
     try:
         mstr = yf.Ticker("MSTR")
-        hist = mstr.history(period="6mo", interval="1d")
-        if hist.empty:
+
+        # ── 第一層：6 個月日線 ─────────────────────────
+        try:
+            hist = mstr.history(period="6mo", interval="1d")
+            if hist.empty or np.isnan(hist['Close'].iloc[-1]):
+                hist = None
+        except:
+            hist = None
+
+        # ── 第二層：3 個月日線 ─────────────────────────
+        if hist is None:
+            try:
+                hist = mstr.history(period="3mo", interval="1d")
+                if hist.empty or np.isnan(hist['Close'].iloc[-1]):
+                    hist = None
+            except:
+                hist = None
+
+        # ── 第三層：1 個月日線 ─────────────────────────
+        if hist is None:
+            try:
+                hist = mstr.history(period="1mo", interval="1d")
+                if hist.empty or np.isnan(hist['Close'].iloc[-1]):
+                    hist = None
+            except:
+                hist = None
+
+        # ── 第四層：改用 Stooq 備援 ─────────────────────
+        if hist is None:
+            try:
+                stooq_url = "https://stooq.com/q/d/l/?s=mstr.us&i=d"
+                df_stooq = pd.read_csv(stooq_url)
+                if not df_stooq.empty:
+                    df_stooq['Date'] = pd.to_datetime(df_stooq['Date'])
+                    df_stooq = df_stooq.set_index('Date').sort_index()
+                    df_stooq = df_stooq.tail(130)  # 取最近約 6 個月
+                    if len(df_stooq) >= 20 and not np.isnan(df_stooq['Close'].iloc[-1]):
+                        hist = df_stooq
+            except:
+                pass
+
+        # 如果全部失敗，回傳 None
+        if hist is None or hist.empty:
             return None
+
+        # ── 正常計算指標 ─────────────────────────────
         price = float(hist['Close'].iloc[-1])
         delta = hist['Close'].diff()
         gain  = delta.clip(lower=0).rolling(14).mean()
@@ -89,6 +134,7 @@ def fetch_mstr_data():
         bb_lower    = float((ma20_series - 2 * std20).iloc[-1])
         log_ret = np.log(hist['Close'] / hist['Close'].shift(1)).dropna()
         hv30    = float(log_ret.tail(30).std() * np.sqrt(252)) if len(log_ret) >= 30 else 0
+
         return {
             'price': price, 'rsi': rsi,
             'ma20': ma20, 'ma60': ma60,
@@ -137,6 +183,9 @@ def fetch_beta_mstr_btc():
     try:
         mstr = yf.Ticker("MSTR").history(period="3mo", interval="1d")
         btc  = yf.Ticker("BTC-USD").history(period="3mo", interval="1d")
+        # 如果 MSTR 抓不到，回傳 0
+        if mstr.empty or btc.empty:
+            return 0
         mstr.index = mstr.index.tz_localize(None)
         btc.index  = btc.index.tz_localize(None)
         m_ret = mstr['Close'].pct_change().dropna()
@@ -365,8 +414,8 @@ rsi_color = "#da3633" if mstr_data and mstr_data['rsi'] > 70 else "#238636" if m
 iv_color  = "#f0883e" if atm_iv > 0 else "#848e9c"
 fng_color = "#238636" if fng <= 30 else "#da3633" if fng >= 70 else "#848e9c"
 
-kpi(k1, "MSTR 股價", f"${mstr_price:.2f}",
-    f"MA20 ${mstr_data['ma20']:.2f} | MA60 ${mstr_data['ma60']:.2f}" if mstr_data else "",
+kpi(k1, "MSTR 股價", f"${mstr_price:.2f}" if mstr_price > 0 else "N/A",
+    f"MA20 ${mstr_data['ma20']:.2f} | MA60 ${mstr_data['ma60']:.2f}" if mstr_data else "數據載入失敗",
     mstr_chg_color)
 kpi(k2, "BTC 即時價格", f"${btc_price:,.0f}",
     f"24H {btc_delta:+.2f}%", btc_chg_color)
@@ -435,6 +484,8 @@ with col_chart:
             height=380, margin=dict(l=0,r=0,t=30,b=0)
         )
         st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+    else:
+        st.warning("⚠️ MSTR 歷史數據載入失敗，請稍後重新整理頁面。")
 
 with col_sig:
     st.markdown("#### 🚦 多維訊號判讀")
