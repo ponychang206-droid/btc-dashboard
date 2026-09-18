@@ -3,5 +3,6 @@ numpy
 pandas
 plotly
 yfinance
-binance-futures-connector
+requests
+futu-api
 scipy
