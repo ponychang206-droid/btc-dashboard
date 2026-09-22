@@ -24,13 +24,13 @@ TAIPEI_TZ = ZoneInfo("Asia/Taipei")
 # Session State 初始化
 # ==========================================
 DEFAULTS = {
-    "MSTR_BTC_HOLDINGS":   846000,      # 更新
-    "MSTR_AVG_COST":       75416,       # 更新
-    "MSTR_BASIC_SHARES":   420507000,   # 更新
-    "MSTR_TOTAL_DEBT_M":   6714,        # 不變
-    "MSTR_TOTAL_PREF_M":   14294,       # 更新
-    "MSTR_CASH_RESERVE_M": 6092,        # 更新（5043 + 1049）
-    "MSTR_FDSO":           429839000,   # 更新
+    "MSTR_BTC_HOLDINGS":   846000,
+    "MSTR_AVG_COST":       75416,
+    "MSTR_BASIC_SHARES":   420507000,
+    "MSTR_TOTAL_DEBT_M":   6714,
+    "MSTR_TOTAL_PREF_M":   14294,
+    "MSTR_CASH_RESERVE_M": 6092,
+    "MSTR_FDSO":           429839000,
 }
 for k, v in DEFAULTS.items():
     if f"{k}_val" not in st.session_state:
@@ -41,11 +41,8 @@ def save_params():
         if k in st.session_state:
             st.session_state[f"{k}_val"] = st.session_state[k]
 
-# ── 備兌買權部位 Session State（根據圖二交易記錄更新）──
-# ⚠️ market_price 是「備援值」，若 yfinance 抓不到對應合約，才會用到這個
+# ── 備兌買權部位 Session State ──────────────────────────
 CC_POSITIONS_DEFAULT = [
-    # 已平倉的 Sep'26 $155 和 Nov'26 $160 不再顯示，因為你已經買回
-    # 新增的 Jan'27 $230（6 口）和 Jan'27 $235（2 口）
     {"id": 3, "label": "MSTR Dec18'26 $190", "strike": 190.0, "expiry": "2026-12-18", "contracts": 1,  "net_cash": 400.0,  "market_price": 5.35, "ticker": "MSTR", "active": True},
     {"id": 4, "label": "MSTR Dec18'26 $195", "strike": 195.0, "expiry": "2026-12-18", "contracts": 1,  "net_cash": 400.0,  "market_price": 4.85, "ticker": "MSTR", "active": True},
     {"id": 5, "label": "MSTR Jan15'27 $190", "strike": 190.0, "expiry": "2027-01-15", "contracts": 1,  "net_cash": 500.0,  "market_price": 7.43, "ticker": "MSTR", "active": True},
@@ -78,7 +75,6 @@ def bs_call(S, K, T, r, sigma):
     return p, d, t, prob
 
 def implied_vol_from_price(S, K, T, r, market_price):
-    """用市場價反推 IV（牛頓法）"""
     if T <= 0 or S <= 0 or K <= 0 or market_price <= 0:
         return 0
     def objective(sigma):
@@ -90,7 +86,7 @@ def implied_vol_from_price(S, K, T, r, market_price):
         return 0
 
 # ==========================================
-# 1. 數據抓取模組（全部用 yfinance 或免費 API）
+# 1. 數據抓取模組
 # ==========================================
 @st.cache_data(ttl=30)
 def fetch_btc_price():
@@ -108,77 +104,106 @@ def fetch_btc_price():
 
 @st.cache_data(ttl=60)
 def fetch_mstr_data():
-    """MSTR 股價與歷史數據（yfinance，含多層備援）"""
+    """MSTR 股價與歷史數據（五層備援）"""
     hist = None
+
+    # ── 第一層：yfinance 6 個月日線 ──────────────
     try:
         mstr = yf.Ticker("MSTR")
+        hist = mstr.history(period="6mo", interval="1d")
+        if hist.empty or np.isnan(hist['Close'].iloc[-1]):
+            hist = None
+    except:
+        hist = None
 
+    # ── 第二層：yfinance 3 個月日線 ──────────────
+    if hist is None:
         try:
-            hist = mstr.history(period="6mo", interval="1d")
+            mstr = yf.Ticker("MSTR")
+            hist = mstr.history(period="3mo", interval="1d")
             if hist.empty or np.isnan(hist['Close'].iloc[-1]):
                 hist = None
         except:
             hist = None
 
-        if hist is None:
-            try:
-                hist = mstr.history(period="3mo", interval="1d")
-                if hist.empty or np.isnan(hist['Close'].iloc[-1]):
-                    hist = None
-            except:
+    # ── 第三層：yfinance 1 個月日線 ──────────────
+    if hist is None:
+        try:
+            mstr = yf.Ticker("MSTR")
+            hist = mstr.history(period="1mo", interval="1d")
+            if hist.empty or np.isnan(hist['Close'].iloc[-1]):
                 hist = None
+        except:
+            hist = None
 
-        if hist is None:
-            try:
-                hist = mstr.history(period="1mo", interval="1d")
-                if hist.empty or np.isnan(hist['Close'].iloc[-1]):
-                    hist = None
-            except:
-                hist = None
+    # ── 第四層：Stooq CSV 備援 ──────────────────
+    if hist is None:
+        try:
+            stooq_url = "https://stooq.com/q/d/l/?s=mstr.us&i=d"
+            df_stooq = pd.read_csv(stooq_url)
+            if not df_stooq.empty:
+                df_stooq['Date'] = pd.to_datetime(df_stooq['Date'])
+                df_stooq = df_stooq.set_index('Date').sort_index()
+                df_stooq = df_stooq.tail(130)
+                if len(df_stooq) >= 20:
+                    df_stooq.columns = [c.capitalize() for c in df_stooq.columns]
+                    hist = df_stooq
+        except:
+            pass
 
-        if hist is None:
-            try:
-                stooq_url = "https://stooq.com/q/d/l/?s=mstr.us&i=d"
-                df_stooq = pd.read_csv(stooq_url)
-                if not df_stooq.empty:
-                    df_stooq['Date'] = pd.to_datetime(df_stooq['Date'])
-                    df_stooq = df_stooq.set_index('Date').sort_index()
-                    df_stooq = df_stooq.tail(130)
-                    if len(df_stooq) >= 20 and not np.isnan(df_stooq['Close'].iloc[-1]):
-                        df_stooq.columns = [c.capitalize() for c in df_stooq.columns]
-                        hist = df_stooq
-            except:
-                pass
+    # ── 第五層：Yahoo Finance 直接 HTTP 請求 ──────
+    if hist is None:
+        try:
+            url = "https://query1.finance.yahoo.com/v8/finance/chart/MSTR?range=6mo&interval=1d"
+            headers = {"User-Agent": "Mozilla/5.0"}
+            resp = requests.get(url, headers=headers, timeout=10)
+            data = resp.json()
+            result = data["chart"]["result"][0]
+            timestamps = result["timestamp"]
+            quotes = result["indicators"]["quote"][0]
+            df_yahoo = pd.DataFrame({
+                "Date": pd.to_datetime(timestamps, unit="s"),
+                "Open": quotes["open"],
+                "High": quotes["high"],
+                "Low": quotes["low"],
+                "Close": quotes["close"],
+                "Volume": quotes["volume"],
+            }).dropna()
+            df_yahoo = df_yahoo.set_index("Date").sort_index()
+            if len(df_yahoo) >= 20:
+                hist = df_yahoo
+        except:
+            pass
 
-        if hist is None or hist.empty:
-            return None
-
-        price = float(hist['Close'].iloc[-1])
-        delta = hist['Close'].diff()
-        gain  = delta.clip(lower=0).rolling(14).mean()
-        loss  = (-delta.clip(upper=0)).rolling(14).mean()
-        rs    = gain / loss
-        rsi   = float((100 - 100 / (1 + rs)).iloc[-1])
-
-        ma20 = float(hist['Close'].rolling(20).mean().iloc[-1])
-        ma60 = float(hist['Close'].rolling(60).mean().iloc[-1]) if len(hist) >= 60 else ma20
-
-        ma20_series = hist['Close'].rolling(20).mean()
-        std20       = hist['Close'].rolling(20).std()
-        bb_upper    = float((ma20_series + 2 * std20).iloc[-1])
-        bb_lower    = float((ma20_series - 2 * std20).iloc[-1])
-
-        log_ret = np.log(hist['Close'] / hist['Close'].shift(1)).dropna()
-        hv30    = float(log_ret.tail(30).std() * np.sqrt(252)) if len(log_ret) >= 30 else 0
-
-        return {
-            'price': price, 'rsi': rsi,
-            'ma20': ma20, 'ma60': ma60,
-            'bb_upper': bb_upper, 'bb_lower': bb_lower,
-            'hv30': hv30, 'hist': hist,
-        }
-    except:
+    # ── 全部失敗：回傳 None ─────────────────────
+    if hist is None or hist.empty:
         return None
+
+    # ── 計算技術指標 ─────────────────────────────
+    price = float(hist['Close'].iloc[-1])
+    delta = hist['Close'].diff()
+    gain  = delta.clip(lower=0).rolling(14).mean()
+    loss  = (-delta.clip(upper=0)).rolling(14).mean()
+    rs    = gain / loss
+    rsi   = float((100 - 100 / (1 + rs)).iloc[-1])
+
+    ma20 = float(hist['Close'].rolling(20).mean().iloc[-1])
+    ma60 = float(hist['Close'].rolling(60).mean().iloc[-1]) if len(hist) >= 60 else ma20
+
+    ma20_series = hist['Close'].rolling(20).mean()
+    std20       = hist['Close'].rolling(20).std()
+    bb_upper    = float((ma20_series + 2 * std20).iloc[-1])
+    bb_lower    = float((ma20_series - 2 * std20).iloc[-1])
+
+    log_ret = np.log(hist['Close'] / hist['Close'].shift(1)).dropna()
+    hv30    = float(log_ret.tail(30).std() * np.sqrt(252)) if len(log_ret) >= 30 else 0
+
+    return {
+        'price': price, 'rsi': rsi,
+        'ma20': ma20, 'ma60': ma60,
+        'bb_upper': bb_upper, 'bb_lower': bb_lower,
+        'hv30': hv30, 'hist': hist,
+    }
 
 @st.cache_data(ttl=60)
 def fetch_mstr_options():
@@ -217,7 +242,6 @@ def fetch_mstr_options():
 
 @st.cache_data(ttl=60)
 def fetch_market_price_for_option(ticker_symbol, expiry_date, strike, option_type='call'):
-    """從 yfinance 期權鏈自動抓取指定合約的市場價"""
     try:
         obj = yf.Ticker(ticker_symbol)
         exps = obj.options
@@ -370,12 +394,37 @@ with st.sidebar:
         key="MSTR_FDSO", on_change=save_params)
 
     st.markdown("---")
+    st.markdown("**🆘 手動備援**")
+    st.caption("當 yfinance 完全失效時，手動輸入 MSTR 股價")
+    manual_mstr_price = st.number_input(
+        "手動 MSTR 股價 (0 = 不使用)",
+        min_value=0.0, max_value=10000.0, value=0.0,
+        step=1.0, key="manual_mstr_price"
+    )
+
+    st.markdown("---")
     st.caption("📡 數據來源：yfinance + 公開 API")
     st.caption("☁️ 雲端版：市場價自動抓取")
 
     btc_price, btc_delta = fetch_btc_price()
     mstr_data  = fetch_mstr_data()
-    mstr_price = mstr_data['price'] if mstr_data else 0
+    
+    # 若 yfinance 完全失效，使用手動股價
+    if mstr_data is None and manual_mstr_price > 0:
+        mstr_price = manual_mstr_price
+        st.warning(f"⚠️ yfinance 失效，使用手動輸入股價 ${mstr_price:.2f}")
+        # 用一個假的 mstr_data 讓後續計算能跑
+        mstr_data = {
+            'price': mstr_price, 'rsi': 50.0,
+            'ma20': mstr_price, 'ma60': mstr_price,
+            'bb_upper': mstr_price * 1.1, 'bb_lower': mstr_price * 0.9,
+            'hv30': 0.85, 'hist': pd.DataFrame()
+        }
+    elif mstr_data:
+        mstr_price = mstr_data['price']
+    else:
+        mstr_price = 0
+
     funding    = fetch_funding_rate()
     fng        = fetch_fear_greed()
     macro      = fetch_macro()
@@ -475,10 +524,10 @@ iv_color  = "#f0883e" if atm_iv > 0 else "#848e9c"
 fng_color = "#238636" if fng <= 30 else "#da3633" if fng >= 70 else "#848e9c"
 
 kpi(k1, "MSTR 股價", f"${mstr_price:.2f}" if mstr_price > 0 else "N/A",
-    f"MA20 ${mstr_data['ma20']:.2f} | MA60 ${mstr_data['ma60']:.2f}" if mstr_data else "數據載入失敗",
+    f"MA20 ${mstr_data['ma20']:.2f} | MA60 ${mstr_data['ma60']:.2f}" if mstr_data and not mstr_data['hist'].empty else "數據載入失敗",
     mstr_chg_color)
 kpi(k2, "BTC 即時價格", f"${btc_price:,.0f}", f"24H {btc_delta:+.2f}%", btc_chg_color)
-kpi(k3, "RSI (14)", f"{mstr_data['rsi']:.1f}" if mstr_data else "N/A", "超買 >70 | 超賣 <30", rsi_color)
+kpi(k3, "RSI (14)", f"{mstr_data['rsi']:.1f}" if mstr_data and not mstr_data['hist'].empty else "N/A", "超買 >70 | 超賣 <30", rsi_color)
 kpi(k4, "隱含波動率 IV", f"{atm_iv*100:.1f}%" if atm_iv > 0 else "N/A",
     f"HV30 {mstr_data['hv30']*100:.1f}% | IV/HV {atm_iv/mstr_data['hv30']:.2f}x" if mstr_data and mstr_data['hv30'] > 0 and atm_iv > 0 else "", iv_color)
 kpi(k5, "Put/Call Ratio", f"{pc_ratio:.2f}" if pc_ratio else "N/A", ">1.0 市場偏空 | <0.7 市場偏多",
@@ -532,11 +581,11 @@ with col_chart:
             height=380, margin=dict(l=0,r=0,t=30,b=0))
         st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
     else:
-        st.warning("⚠️ MSTR 歷史數據載入失敗，請稍後重新整理頁面。")
+        st.warning("⚠️ MSTR 歷史數據載入失敗。若 yfinance 失效，請在側邊欄手動輸入股價。")
 
 with col_sig:
     st.markdown("#### 🚦 多維訊號判讀")
-    if mstr_data:
+    if mstr_data and not mstr_data['hist'].empty:
         rsi_val = mstr_data['rsi']
         if rsi_val > 70:
             st.markdown(f'<div class="sig-bear"><div class="sig-t" style="color:#da3633;">🔴 RSI 超買（{rsi_val:.1f}）</div><div class="sig-d">短期漲幅過大，注意回調風險。</div></div>', unsafe_allow_html=True)
@@ -646,7 +695,6 @@ if mstr_price > 0 and positions:
             days_left = 30
             T = 30/365
 
-        # ── 自動從 yfinance 抓取市場價 ──
         auto_market_price = 0
         auto_iv = 0
         try:
