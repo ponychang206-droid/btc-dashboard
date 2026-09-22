@@ -102,12 +102,38 @@ def fetch_btc_price():
     except:
         return 0, 0
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=30)
 def fetch_mstr_data():
-    """MSTR 股價與歷史數據（五層備援）"""
+    """MSTR 股價與歷史數據（優先抓即時價）"""
     hist = None
+    realtime_price = 0
+    price_source = "收盤價"
 
-    # ── 第一層：yfinance 6 個月日線 ──────────────
+    # ── 第一層：嘗試抓「即時價」（fast_info）──
+    try:
+        mstr = yf.Ticker("MSTR")
+        fast_info = mstr.fast_info
+        if hasattr(fast_info, 'last_price') and fast_info.last_price and fast_info.last_price > 0:
+            realtime_price = float(fast_info.last_price)
+            price_source = "即時價"
+    except:
+        pass
+
+    # ── 第二層：若即時價失敗，改用 info ────────
+    if realtime_price == 0:
+        try:
+            mstr = yf.Ticker("MSTR")
+            info = mstr.info
+            if 'currentPrice' in info and info['currentPrice'] and info['currentPrice'] > 0:
+                realtime_price = float(info['currentPrice'])
+                price_source = "即時價"
+            elif 'regularMarketPrice' in info and info['regularMarketPrice'] and info['regularMarketPrice'] > 0:
+                realtime_price = float(info['regularMarketPrice'])
+                price_source = "即時價"
+        except:
+            pass
+
+    # ── 第三層：yfinance 6 個月日線（取收盤價）──
     try:
         mstr = yf.Ticker("MSTR")
         hist = mstr.history(period="6mo", interval="1d")
@@ -116,7 +142,7 @@ def fetch_mstr_data():
     except:
         hist = None
 
-    # ── 第二層：yfinance 3 個月日線 ──────────────
+    # ── 第四層：yfinance 3 個月日線 ──────────────
     if hist is None:
         try:
             mstr = yf.Ticker("MSTR")
@@ -126,17 +152,7 @@ def fetch_mstr_data():
         except:
             hist = None
 
-    # ── 第三層：yfinance 1 個月日線 ──────────────
-    if hist is None:
-        try:
-            mstr = yf.Ticker("MSTR")
-            hist = mstr.history(period="1mo", interval="1d")
-            if hist.empty or np.isnan(hist['Close'].iloc[-1]):
-                hist = None
-        except:
-            hist = None
-
-    # ── 第四層：Stooq CSV 備援 ──────────────────
+    # ── 第五層：Stooq CSV 備援 ──────────────────
     if hist is None:
         try:
             stooq_url = "https://stooq.com/q/d/l/?s=mstr.us&i=d"
@@ -151,7 +167,7 @@ def fetch_mstr_data():
         except:
             pass
 
-    # ── 第五層：Yahoo Finance 直接 HTTP 請求 ──────
+    # ── 第六層：Yahoo Finance 直接 HTTP 請求 ──────
     if hist is None:
         try:
             url = "https://query1.finance.yahoo.com/v8/finance/chart/MSTR?range=6mo&interval=1d"
@@ -179,8 +195,14 @@ def fetch_mstr_data():
     if hist is None or hist.empty:
         return None
 
+    # ── 決定最終價格 ─────────────────────────────
+    if realtime_price > 0:
+        price = realtime_price
+    else:
+        price = float(hist['Close'].iloc[-1])
+        price_source = "收盤價"
+
     # ── 計算技術指標 ─────────────────────────────
-    price = float(hist['Close'].iloc[-1])
     delta = hist['Close'].diff()
     gain  = delta.clip(lower=0).rolling(14).mean()
     loss  = (-delta.clip(upper=0)).rolling(14).mean()
@@ -203,6 +225,7 @@ def fetch_mstr_data():
         'ma20': ma20, 'ma60': ma60,
         'bb_upper': bb_upper, 'bb_lower': bb_lower,
         'hv30': hv30, 'hist': hist,
+        'price_source': price_source,
     }
 
 @st.cache_data(ttl=60)
@@ -408,17 +431,16 @@ with st.sidebar:
 
     btc_price, btc_delta = fetch_btc_price()
     mstr_data  = fetch_mstr_data()
-    
-    # 若 yfinance 完全失效，使用手動股價
+
     if mstr_data is None and manual_mstr_price > 0:
         mstr_price = manual_mstr_price
         st.warning(f"⚠️ yfinance 失效，使用手動輸入股價 ${mstr_price:.2f}")
-        # 用一個假的 mstr_data 讓後續計算能跑
         mstr_data = {
             'price': mstr_price, 'rsi': 50.0,
             'ma20': mstr_price, 'ma60': mstr_price,
             'bb_upper': mstr_price * 1.1, 'bb_lower': mstr_price * 0.9,
-            'hv30': 0.85, 'hist': pd.DataFrame()
+            'hv30': 0.85, 'hist': pd.DataFrame(),
+            'price_source': '手動'
         }
     elif mstr_data:
         mstr_price = mstr_data['price']
@@ -523,8 +545,10 @@ rsi_color = "#da3633" if mstr_data and mstr_data['rsi'] > 70 else "#238636" if m
 iv_color  = "#f0883e" if atm_iv > 0 else "#848e9c"
 fng_color = "#238636" if fng <= 30 else "#da3633" if fng >= 70 else "#848e9c"
 
+# 顯示價格來源
+price_src = mstr_data.get('price_source', '') if mstr_data else ''
 kpi(k1, "MSTR 股價", f"${mstr_price:.2f}" if mstr_price > 0 else "N/A",
-    f"MA20 ${mstr_data['ma20']:.2f} | MA60 ${mstr_data['ma60']:.2f}" if mstr_data and not mstr_data['hist'].empty else "數據載入失敗",
+    f"{price_src} | MA20 ${mstr_data['ma20']:.2f} | MA60 ${mstr_data['ma60']:.2f}" if mstr_data and not mstr_data['hist'].empty else "數據載入失敗",
     mstr_chg_color)
 kpi(k2, "BTC 即時價格", f"${btc_price:,.0f}", f"24H {btc_delta:+.2f}%", btc_chg_color)
 kpi(k3, "RSI (14)", f"{mstr_data['rsi']:.1f}" if mstr_data and not mstr_data['hist'].empty else "N/A", "超買 >70 | 超賣 <30", rsi_color)
@@ -644,7 +668,7 @@ except Exception as e:
     st.warning(f"選擇權鏈載入失敗：{e}")
 
 # ==========================================
-# 7b. 備兌買權部位監控與策略建議（雲端版：自動抓取市場價）
+# 7b. 備兌買權部位監控與策略建議
 # ==========================================
 st.markdown("---")
 st.markdown("## 🎯 備兌買權部位監控與平倉策略")
