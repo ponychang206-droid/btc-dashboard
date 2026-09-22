@@ -31,6 +31,9 @@ DEFAULTS = {
     "MSTR_TOTAL_PREF_M":   14294,
     "MSTR_CASH_RESERVE_M": 6092,
     "MSTR_FDSO":           429839000,
+    "ACCOUNT_CASH":        370.0,       # 新增：帳戶現金餘額
+    "STOCK_COST":          232.0,       # 新增：MSTR 持股成本
+    "STOCK_SHARES":        3000,        # 新增：MSTR 持股股數
 }
 for k, v in DEFAULTS.items():
     if f"{k}_val" not in st.session_state:
@@ -417,6 +420,21 @@ with st.sidebar:
         key="MSTR_FDSO", on_change=save_params)
 
     st.markdown("---")
+    st.markdown("**💰 帳戶現金與持股**")
+    ACCOUNT_CASH = st.number_input("帳戶現金餘額 ($)",
+        min_value=0.0, max_value=10000000.0,
+        value=st.session_state["ACCOUNT_CASH_val"],
+        step=10.0, key="ACCOUNT_CASH", on_change=save_params)
+    STOCK_COST = st.number_input("MSTR 持股成本 ($)",
+        min_value=0.0, max_value=10000.0,
+        value=st.session_state["STOCK_COST_val"],
+        step=1.0, key="STOCK_COST", on_change=save_params)
+    STOCK_SHARES = st.number_input("MSTR 持股股數",
+        min_value=0, max_value=1000000,
+        value=st.session_state["STOCK_SHARES_val"],
+        step=100, key="STOCK_SHARES", on_change=save_params)
+
+    st.markdown("---")
     st.markdown("**🆘 手動備援**")
     st.caption("當 yfinance 完全失效時，手動輸入 MSTR 股價")
     manual_mstr_price = st.number_input(
@@ -785,18 +803,52 @@ if mstr_price > 0 and positions:
     df_cc = pd.DataFrame(rows_cc)
     st.dataframe(df_cc, use_container_width=True, hide_index=True)
 
+    # ── 總覽：帳戶現金餘額 + 期權淨損益 ──
     total_buyback = sum(
         (fetch_market_price_for_option(p["ticker"], p["expiry"], p["strike"], 'call')[0] or p.get("market_price", 0.0)) * 100 * p["contracts"]
         for p in positions
     )
-    total_net_cash = sum(p["net_cash"] for p in positions)
-    net_pnl_all = total_net_cash - total_buyback if total_buyback > 0 else 0
+    account_cash = st.session_state["ACCOUNT_CASH_val"]
+    options_pnl = account_cash - total_buyback
 
+    st.markdown("---")
+    st.markdown("#### 💰 帳戶現金與期權損益")
     col_a, col_b, col_c = st.columns(3)
     col_a.metric("全部平倉估算成本", f"${total_buyback:,.0f}" if total_buyback > 0 else "—")
-    col_b.metric("這批合約歷史淨收入", f"${total_net_cash:,.0f}")
-    col_c.metric("淨損益（正=獲利）", f"${net_pnl_all:+,.0f}" if total_buyback > 0 else "—",
-                 delta="獲利" if net_pnl_all >= 0 else "虧損" if total_buyback > 0 else "")
+    col_b.metric("帳戶現金餘額", f"${account_cash:,.0f}")
+    col_c.metric("期權淨損益", f"${options_pnl:+,.0f}" if total_buyback > 0 else "—",
+                 delta="獲利" if options_pnl >= 0 else "虧損" if total_buyback > 0 else "")
+
+    # ── 股票帳面損益 ──
+    stock_cost = st.session_state["STOCK_COST_val"]
+    stock_shares = st.session_state["STOCK_SHARES_val"]
+    stock_pnl = (mstr_price - stock_cost) * stock_shares
+    stock_pnl_color = "#238636" if stock_pnl >= 0 else "#da3633"
+
+    st.markdown("---")
+    st.markdown("#### 📊 MSTR 股票帳面損益")
+    col_d, col_e, col_f = st.columns(3)
+    col_d.metric("持股成本", f"${stock_cost:.2f}")
+    col_e.metric("持股股數", f"{stock_shares:,} 股")
+    col_f.metric("股票帳面損益", f"${stock_pnl:+,.0f}",
+                 delta="獲利" if stock_pnl >= 0 else "虧損")
+
+    # ── 總損益 ──
+    st.markdown("---")
+    st.markdown("#### 🎯 總損益")
+    total_pnl = options_pnl + stock_pnl
+    total_pnl_color = "#238636" if total_pnl >= 0 else "#da3633"
+    st.markdown(f"""
+        <div style="background:#181a20;border:1px solid #2b3139;border-radius:8px;padding:20px;text-align:center;">
+            <div style="font-size:12px;color:#848e9c;">期權淨損益 + 股票帳面損益</div>
+            <div style="font-size:32px;font-weight:800;color:{total_pnl_color};font-family:monospace;margin-top:8px;">
+                ${total_pnl:+,.0f}
+            </div>
+            <div style="font-size:11px;color:#848e9c;margin-top:8px;">
+                期權 ${options_pnl:+,.0f} + 股票 ${stock_pnl:+,.0f}
+            </div>
+        </div>
+    """, unsafe_allow_html=True)
 
 # ==========================================
 # 8. 官方 mNAV 壓力測試模擬表
