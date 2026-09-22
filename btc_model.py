@@ -24,13 +24,13 @@ TAIPEI_TZ = ZoneInfo("Asia/Taipei")
 # Session State 初始化
 # ==========================================
 DEFAULTS = {
-    "MSTR_BTC_HOLDINGS":   845050,
-    "MSTR_AVG_COST":       75412,
-    "MSTR_BASIC_SHARES":   420497000,
-    "MSTR_TOTAL_DEBT_M":   6714,
-    "MSTR_TOTAL_PREF_M":   14481,
-    "MSTR_CASH_RESERVE_M": 6398,
-    "MSTR_FDSO":           424501000,
+    "MSTR_BTC_HOLDINGS":   846000,      # 更新
+    "MSTR_AVG_COST":       75416,       # 更新
+    "MSTR_BASIC_SHARES":   420507000,   # 更新
+    "MSTR_TOTAL_DEBT_M":   6714,        # 不變
+    "MSTR_TOTAL_PREF_M":   14294,       # 更新
+    "MSTR_CASH_RESERVE_M": 6092,        # 更新（5043 + 1049）
+    "MSTR_FDSO":           429839000,   # 更新
 }
 for k, v in DEFAULTS.items():
     if f"{k}_val" not in st.session_state:
@@ -41,15 +41,17 @@ def save_params():
         if k in st.session_state:
             st.session_state[f"{k}_val"] = st.session_state[k]
 
-# ── 備兌買權部位 Session State ──────────────────────────
+# ── 備兌買權部位 Session State（根據圖二交易記錄更新）──
 # ⚠️ market_price 是「備援值」，若 yfinance 抓不到對應合約，才會用到這個
 CC_POSITIONS_DEFAULT = [
-    {"id": 1, "label": "MSTR Sep25'26 $155", "strike": 155.0, "expiry": "2026-09-25", "contracts": 2,  "net_cash": 400.0,  "market_price": 0.84, "ticker": "MSTR", "active": True},
-    {"id": 2, "label": "MSTR Nov20'26 $160", "strike": 160.0, "expiry": "2026-11-20", "contracts": 6,  "net_cash": 1600.0, "market_price": 7.28, "ticker": "MSTR", "active": True},
+    # 已平倉的 Sep'26 $155 和 Nov'26 $160 不再顯示，因為你已經買回
+    # 新增的 Jan'27 $230（6 口）和 Jan'27 $235（2 口）
     {"id": 3, "label": "MSTR Dec18'26 $190", "strike": 190.0, "expiry": "2026-12-18", "contracts": 1,  "net_cash": 400.0,  "market_price": 5.35, "ticker": "MSTR", "active": True},
     {"id": 4, "label": "MSTR Dec18'26 $195", "strike": 195.0, "expiry": "2026-12-18", "contracts": 1,  "net_cash": 400.0,  "market_price": 4.85, "ticker": "MSTR", "active": True},
     {"id": 5, "label": "MSTR Jan15'27 $190", "strike": 190.0, "expiry": "2027-01-15", "contracts": 1,  "net_cash": 500.0,  "market_price": 7.43, "ticker": "MSTR", "active": True},
     {"id": 6, "label": "MSTR Jan15'27 $195", "strike": 195.0, "expiry": "2027-01-15", "contracts": 20, "net_cash": 4000.0, "market_price": 6.80, "ticker": "MSTR", "active": True},
+    {"id": 8, "label": "MSTR Jan15'27 $230", "strike": 230.0, "expiry": "2027-01-15", "contracts": 6,  "net_cash": 7270.0, "market_price": 12.12, "ticker": "MSTR", "active": True},
+    {"id": 9, "label": "MSTR Jan15'27 $235", "strike": 235.0, "expiry": "2027-01-15", "contracts": 2,  "net_cash": 2373.0, "market_price": 11.87, "ticker": "MSTR", "active": True},
     {"id": 7, "label": "COIN Nov20'26 $210", "strike": 210.0, "expiry": "2026-11-20", "contracts": 3,  "net_cash": 1084.0, "market_price": 8.79, "ticker": "COIN", "active": True},
 ]
 if "cc_positions" not in st.session_state:
@@ -215,36 +217,28 @@ def fetch_mstr_options():
 
 @st.cache_data(ttl=60)
 def fetch_market_price_for_option(ticker_symbol, expiry_date, strike, option_type='call'):
-    """
-    從 yfinance 期權鏈自動抓取指定合約的市場價
-    回傳 (market_price, iv) 或 (0, 0) 表示抓不到
-    """
+    """從 yfinance 期權鏈自動抓取指定合約的市場價"""
     try:
         obj = yf.Ticker(ticker_symbol)
         exps = obj.options
         if not exps:
             return 0, 0
 
-        # 嘗試找出匹配的到期日
-        # yfinance 的到期日格式：YYYY-MM-DD
         try:
             exp_dt = datetime.strptime(expiry_date, "%Y-%m-%d")
             exp_str = exp_dt.strftime("%Y-%m-%d")
         except:
             exp_str = expiry_date
 
-        # 找最接近的到期日
         matched_exp = None
         for e in exps:
             if e == exp_str:
                 matched_exp = e
                 break
         if matched_exp is None:
-            # 找最接近的
             try:
                 target = datetime.strptime(exp_str, "%Y-%m-%d")
                 closest = min(exps, key=lambda e: abs((datetime.strptime(e, "%Y-%m-%d") - target).days))
-                # 差距超過 7 天就不匹配
                 if abs((datetime.strptime(closest, "%Y-%m-%d") - target).days) <= 7:
                     matched_exp = closest
             except:
@@ -256,12 +250,10 @@ def fetch_market_price_for_option(ticker_symbol, expiry_date, strike, option_typ
         chain = obj.option_chain(matched_exp)
         df = chain.calls if option_type == 'call' else chain.puts
 
-        # 找最接近的履約價
         df = df.copy()
         df['strike_dist'] = abs(df['strike'] - strike)
         matched = df.sort_values('strike_dist').iloc[0]
 
-        # 取中間價（bid/ask 平均）或最新成交價
         bid = matched['bid'] if pd.notna(matched['bid']) and matched['bid'] > 0 else 0
         ask = matched['ask'] if pd.notna(matched['ask']) and matched['ask'] > 0 else 0
         last = matched['lastPrice'] if pd.notna(matched['lastPrice']) and matched['lastPrice'] > 0 else 0
@@ -658,14 +650,12 @@ if mstr_price > 0 and positions:
         auto_market_price = 0
         auto_iv = 0
         try:
-            # 判斷是 Call 還是 Put（目前都是 Call）
             auto_market_price, auto_iv = fetch_market_price_for_option(
                 pos["ticker"], pos["expiry"], pos["strike"], 'call'
             )
         except:
             pass
 
-        # 若自動抓取失敗，用手動備援值
         manual_market_price = pos.get("market_price", 0.0)
         if auto_market_price > 0:
             market_price = auto_market_price
@@ -677,7 +667,6 @@ if mstr_price > 0 and positions:
             market_price = 0
             price_source = "無"
 
-        # ── 用市場價反推 IV，若失敗則用 atm_iv ──
         if market_price > 0 and T > 0:
             iv_from_market = implied_vol_from_price(mstr_price, pos["strike"], T, r_rf, market_price)
             if iv_from_market > 0:
@@ -690,7 +679,6 @@ if mstr_price > 0 and positions:
 
         iv_valid = iv_use >= 0.50
 
-        # 用反推的 IV 算 Delta / Theta / 被指派機率
         if iv_valid:
             bs_price, delta, theta, prob_itm = bs_call(mstr_price, pos["strike"], T, r_rf, iv_use)
             delta_disp = f"{delta:.2f}"
